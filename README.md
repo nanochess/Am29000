@@ -8,6 +8,8 @@ Of course, I knew it was a great thing because you couldn't boot Windows 3.1 or 
 
 A full article about this operating system is available at [https://nanochess.org/the_am29000_computer.html](https://nanochess.org/the_am29000_computer.html)
 
+![image](screenshot.png)
+
 ## Compiling it
 
 You need libSDL2 for compiling the emulator. Just go to libsdl.org and install the latest libSDL2 for your platform.

@@ -1,0 +1,4 @@
+.DS_Store
+*.o
+SDL2.framework/*
+

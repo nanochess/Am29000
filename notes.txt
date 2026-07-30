@@ -1,0 +1,33 @@
+8000e01c Read data (lr4 = lr6 - 32)
+
+8000dae8 Convert file handle into pointer
+         Call function 12 of file system handler
+
+8001002c Read handler for G11a file system.
+
+80010050 lr9 = block size in bytes (4096)
+
+80010154 Copy data from file.
+
+80010184 Advance file pointer (lr14 + 8)
+
+800100dc Block file pointer reaches block size.
+
+800100e8 Read next FAT location
+
+800100f0 Read the new block from the file.
+
+
+
+80038990 Write data
+
+8000fc9c Write handler for G11a file system.
+
+795945 Delete 00000001.tmp
+
+799960 Read 0x0134
+
+
+Jul/26/2026
+
+4317506 PC=0x80033354 ADD gr96,lr30,0x04

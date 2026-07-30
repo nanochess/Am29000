@@ -1,0 +1,1637 @@
+/*
+** Am29000 processor emulator
+**
+** by Oscar Toledo G.
+** https://nanochess.org/
+**
+** Creation date: Jul/30/2026.
+*/
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "am29000.h"
+#include "clgd5429.h"
+
+/*
+ ** Not implemented:
+ ** * LOADL 0x06 0x07
+ ** * LOADSET 0x26 0x27
+ ** * MFTLB 0xb6
+ ** * MTTLB 0xbe
+ ** * STOREL 0x0e 0x0f
+ **
+ ** Not implemented in processor:
+ ** o MMU handling (TLB).
+ ** o Arithmetic traps (ADDS, ADDU, SUBS, SUBU)
+ ** o Channel registers.
+ ** o Interruptable LOADM/STOREM.
+ ** o Interruption pins (required if the 16550 serial chip is emulated).
+ */
+
+/*
+** Am29000 manual from https://archive.org/details/bitsavers_amdAm29000ual_16568459
+** Am29050 manual from https://archive.org/details/bitsavers_amdAm29000nual_30055159
+**   (for some reason not found if you search for am29050)
+**
+** The original Am29000 manual has several deviations over its successor Am29050,
+** in particular the floating-point instructions opcodes change, and the added
+** multiplication instructions.
+*/
+
+/*
+** Page 62:
+** Vector Area Base Address (register 0)
+** Old Processor Status (register 1)
+** Current Processor Status (register 2)
+** Configuration (register 3)
+** Channel Address (register 4)
+** Channel Data (register 5)
+** Channel Control (register 6)
+** Register Bank Protect (register 7)
+** Timer Counter (register 8)
+** Timer Reload (register 9)
+** Program Counter 0 (register 10 decode) (next instruction to be executed)
+** Program Counter 1 (register 11 execute) (current instruction)
+** Program Counter 2 (register 12 write-back) (previous instruction)
+** MMU Configuration (register 13)
+** LRU Recommendation (register 14)
+** Indirect Pointer C (register 128)
+** Indirect Pointer A (register 129)
+** Indirect Pointer B (register 130)
+** Q (register 131)
+** ALU Status (register 132)
+** Byte Pointer (register 133)
+** Funnel Shift Count (register 134)
+** Load/Store Count Remaining (register 135)
+*/
+
+uint32_t rom[32768];
+uint32_t memory[524288 / 4];
+uint32_t regs[256];
+uint32_t special[256];
+
+uint32_t pc0;
+uint32_t pc1;
+uint32_t pc2;
+
+uint32_t count;
+
+/*
+ ** Read a byte
+ */
+int read_byte(uint32_t addr)
+{
+    /* !!! Hard-coded for big-endian */
+    return (read_word(addr) >> (8 * (~addr & 3))) & 0xff;
+}
+
+/*
+ ** Write a byte
+ */
+void write_byte(uint32_t addr, uint32_t byte)
+{
+    uint32_t word;
+    
+    byte &= 0xff;
+    /* !!! Hard-coded for big-endian */
+    word = read_word(addr);
+    word &= ~(0xff000000u >> (8 * (addr & 3)));
+    word |= byte << (8 * (~addr & 3));
+    write_word(addr, word);
+}
+
+/*
+ ** Count leading zeroes
+ */
+int clz(uint32_t value)
+{
+    unsigned char lz[256] = {
+        8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    
+    int c;
+    
+    c = 0;
+    if (((value >> 24) & 0xff) == 0) {
+        c += 8;
+        value <<= 8;
+        if (((value >> 24) & 0xff) == 0) {
+            c += 8;
+            value <<= 8;
+            if (((value >> 24) & 0xff) == 0) {
+                c += 8;
+                value <<= 8;
+            }
+        }
+    }
+    return c + lz[value >> 24];
+}
+
+/*
+ ** Handle trap
+ */
+void trap(int number)
+{
+    special[1] = special[2];    /* Page 3-55 s*/
+    special[2] = (special[2] & 0xc10c) | 0x0473;    /* Figure 3-34 */
+    special[10] = pc0;
+    special[11] = pc1;
+    special[12] = pc2;
+    if ((special[3] & 0x10) == 0) {
+        pc1 = (special[0] & 0xffff0000) | (number << 8);
+        pc0 = pc1 + 4;
+    } else {
+        fprintf(stderr, "Vector Fetch table not implemented\n");
+        exit(1);
+    }
+}
+
+char *special_regs[] = {
+    "VAB", "OPS", "CPS", "CFG", "CHA", "CHD", "CHC", "RBP",
+    "TMC", "TMR", "PC0", "PC1", "PC2", "MMU", "LRU", "RSN",
+    "RMA0", "RMC0", "RMA1", "RMC1", "SPC0", "SPC1", "SPC2", "IBA0",
+    "IBC0", "IBA1", "IBC1", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "IPC", "IPA", "IPB", "Q", "ALU", "BP", "FC", "CR",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "FPE", "INTE", "FPS", "?", "EXOP", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+    "?", "?", "?", "?", "?", "?", "?", "?",
+};
+
+/*
+** Disassemble an instruction
+*/
+void disassemble(uint32_t pc, uint32_t instruction, char *p)
+{
+    char *mnemonic[] = {
+        "???", "CONSTN %a,%m", "CONSTH %a,%m", "CONST %a,%m", "MTSRIM %s,%m", "CONSTHZ %a,%m", "LOADL %l,%a,%b", "LOADL %l,%a,%i",
+        "CLZ %c,%b", "CLZ %c,%i", "EXBYTE %c,%a,%b", "EXBYTE %c,%a,%i", "INBYTE %c,%a,%b", "INBYTE %c,%a,%i", "STOREL %l,%a,%b", "STOREL %l,%a,%i",
+        "ADDS %c,%a,%b", "ADDS %c,%a,%i", "ADDU %c,%a,%b", "ADDU %c,%a,%i", "ADD %c,%a,%b", "ADD %c,%a,%i", "LOAD %l,%a,%b", "LOAD %l,%a,%i",
+        "ADDCS %c,%a,%b", "ADDCS %c,%a,%i", "ADDCU %c,%a,%b", "ADDCU %c,%a,%i", "ADDC %c,%a,%b", "ADDC %c,%a,%i", "STORE %l,%a,%b", "STORE %l,%a,%i",
+        "SUBS %c,%a,%b", "SUBS %c,%a,%i", "SUBU %c,%a,%b", "SUBU %c,%a,%i", "SUB %c,%a,%b", "SUB %c,%a,%i", "LOADSET %l,%a,%b", "LOADSET %l,%a,%i",
+        "SUBCS %c,%a,%b", "SUBCS %c,%a,%i", "SUBCU %c,%a,%b", "SUBCU %c,%a,%i", "SUBC %c,%a,%b", "SUBC %c,%a,%i", "CPBYTE %c,%a,%b", "CPBYTE %c,%a,%i",
+        "SUBRS %c,%a,%b", "SUBRS %c,%a,%i", "SUBRU %c,%a,%b", "SUBRU %c,%a,%i", "SUBR %c,%a,%b", "SUBR %c,%a,%i", "LOADM %l,%a,%b", "LOADM %l,%a,%i",
+        "SUBRCS %c,%a,%b", "SUBRCS %c,%a,%i", "SUBRCU %c,%a,%b", "SUBRCU %c,%a,%i", "SUBRC %c,%a,%b", "SUBRC %c,%a,%i", "STOREM %l,%a,%b", "STOREM %l,%a,%i",
+        "CPLT %c,%a,%b", "CPLT %c,%a,%i", "CPLTU %c,%a,%b", "CPLTU %c,%a,%i", "CPLE %c,%a,%b", "CPLE %c,%a,%i", "CPLEU %c,%a,%b", "CPLEU %c,%a,%i",
+        "CPGT %c,%a,%b", "CPGT %c,%a,%i", "CPGTU %c,%a,%b", "CPGTU %c,%a,%i", "CPGE %c,%a,%b", "CPGE %c,%a,%i", "CPGEU %c,%a,%b", "CPGEU %c,%a,%i",
+        "ASLT %t,%a,%b", "ASLT %t,%a,%i", "ASLTU %t,%a,%b", "ASLTU %t,%a,%i", "ASLE %t,%a,%b", "ASLE %t,%a,%i", "ASLEU %t,%a,%b", "ASLEU %t,%a,%i",
+        "ASGT %t,%a,%b", "ASGT %t,%a,%i", "ASGTU %t,%a,%b", "ASGTU %t,%a,%i", "ASGE %t,%a,%b", "ASGE %t,%a,%i", "ASGEU %t,%a,%b", "ASGEU %t,%a,%i",
+        "CPEQ %c,%a,%b", "CPEQ %c,%a,%i", "CPNEQ %c,%a,%b", "CPNEQ %c,%a,%i", "MUL %c,%a,%b", "MUL %c,%a,%i", "MULL %c,%a,%b", "MULL %c,%a,%i",
+        "DIV0 %c,%b", "DIV0 %c,%i", "DIV %c,%a,%b", "DIV %c,%a,%i", "DIVL %c,%a,%b", "DIVL %c,%a,%i", "DIVREM %c,%a,%b", "DIVREM %c,%a,%i",
+        "ASEQ %t,%a,%b", "ASEQ %t,%a,%i", "ASNEQ %t,%a,%b", "ASNEQ %t,%a,%i", "MULU %c,%a,%b", "MULU %c,%a,%i", "???", "???",
+        "INHW %c,%a,%b", "INHW %c,%a,%i", "EXTRACT %c,%a,%b", "EXTRACT %c,%a,%i", "EXHW %c,%a,%b", "EXHW %c,%a,%i", "EXHWS %c,%a", "???",
+        "SLL %c,%a,%b", "SLL %c,%a,%i", "SRL %c,%a,%b", "SRL %c,%a,%i", "???", "???", "SRA %c,%a,%b", "SRA %c,%a,%i",
+        "IRET", "HALT", "???", "???", "IRETINV", "???", "???", "???",
+        "AND %c,%a,%b", "AND %c,%a,%i", "OR %c,%a,%b", "OR %c,%a,%i", "XOR %c,%a,%b", "XOR %c,%a,%i", "XNOR %c,%a,%b", "XNOR %c,%a,%i",
+        "NOR %c,%a,%b", "NOR %c,%a,%i", "NAND %c,%a,%b", "NAND %c,%a,%i", "ANDN %c,%a,%b", "ANDN %c,%a,%i", "SETIP %c,%a,%b", "INV",
+        "JMP %r", "JMP %u", "???", "???", "JMPF %a,%r", "JMPF %a,%u", "???", "???",
+        "CALL %a,%r", "CALL %a,%u", "ORN %c,%a,%b", "ORN %c,%a,%i", "JMPT %a,%r", "JMPT %a,%u", "???", "???",
+        "???", "???", "???", "???", "JMPFDEC %a,%r", "JMPFDEC %a,%u", "MFTLB", "???",
+        "???", "???", "???", "???", "???", "???", "MTTLB", "???",
+        "JMPI %b", "???", "???", "???", "JMPFI %a,%b", "???", "MFSR %c,%s", "???",
+        "CALLI %a,%b", "???", "???", "???", "JMPTI %a,%b", "???", "MTSR %s,%b", "???",
+        "???", "???", "???", "???", "???", "???", "???", "EMULATE %c,%a,%b",
+        "FMAC", "DMAC", "FMSM", "DMSM", "???", "???", "MULTM %c,%a,%b", "MULTMU %c,%a,%b",
+        "MULTIPLY %c,%a,%b", "DIVIDE %c,%a,%b", "MULTIPLU %c,%a,%b", "DIVIDU %c,%a,%b", "CONVERT %c,%a,%f", "SQRT", "CLASS", "???",
+        "MTACC", "MFACC", "FEQ %c,%a,%b", "DEQ %c,%a,%b", "FGT %c,%a,%b", "DGT %c,%a,%b", "FLT %c,%a,%b", "DLT %c,%a,%b",
+        "FADD %c,%a,%b", "DADD %c,%a,%b", "FSUB %c,%a,%b", "DSUB %c,%a,%b", "FMUL %c,%a,%b", "DMUL %c,%a,%b", "FDIV %c,%a,%b", "DDIV %c,%a,%b",
+        "???", "FDMUL", "???", "???", "nanochess_emulator %v,%b", "???", "???", "???",
+    };
+    char *q;
+    int reg;
+    uint32_t addr;
+    
+    /*
+     ** The Am29000 doesn't have an instruction named NOP, but
+     ** this is suggested by the AMD manuals.
+     */
+    if ((instruction >> 24) == 0x70) {  /* ASEQ */
+        if (((instruction >> 8) & 0xff) == (instruction & 0xff)) {
+            strcpy(p, "NOP");
+            return;
+        }
+    }
+    q = mnemonic[instruction >> 24];
+    while (*q) {
+        if (*q == '%') {
+            q++;
+            switch (*q++) {
+                case 'c':
+                    reg = (instruction >> 16) & 0xff;
+                    p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
+                    break;
+                case 'a':
+                    reg = (instruction >> 8) & 0xff;
+                    p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
+                    break;
+                case 'b':
+                    reg = (instruction & 0xff);
+                    p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
+                    break;
+                case 'l':
+                    p += sprintf(p, "%d,0x%02x", (instruction >> 23) & 1, (instruction >> 16) & 0x7f);
+                    break;
+                case 'i':
+                    p += sprintf(p, "0x%02x", instruction & 0xff);
+                    break;
+                case 's':
+                    strcpy(p, special_regs[(instruction >> 8) & 0xff]);
+                    while (*p)
+                        p++;
+                    break;
+                case 'v':
+                    p += sprintf(p, "0x%02x", (instruction >> 8) & 0xff);
+                    break;
+                case 't':
+                    p += sprintf(p, "0x%02x", (instruction >> 16) & 0xff);
+                    break;
+                case 'm':
+                    p += sprintf(p, "0x%04x", (instruction & 0xff) | ((instruction >> 8) & 0xff00));
+                    break;
+                case 'r':   /* Relative address */
+                    addr = ((instruction & 0xff) | ((instruction >> 8) & 0xff00)) << 2;
+                    if (addr & 0x020000)
+                        addr -= 0x040000;
+                    addr += pc;
+                    p += sprintf(p, "0x%08x", addr);
+                    break;
+                case 'u':   /* Absolute address */
+                    addr = ((instruction & 0xff) | ((instruction >> 8) & 0xff00)) << 2;
+                    p += sprintf(p, "0x%08x", addr);
+                    break;
+                case 'f':   /* Convert */
+                    p += sprintf(p, "%x,%x,%x,%x", (instruction >> 7) & 1, (instruction >> 4) & 7, (instruction >> 2) & 3, instruction & 3);
+                    break;
+            }
+        } else {
+            *p++ = *q++;
+        }
+    }
+/*    p += sprintf(p, "\tgr95=0x%08x", regs[95]);*/
+    *p = '\0';
+}
+
+/*
+** Emulate one instruction
+*/
+void am29000_emulate(void)
+{
+    uint32_t instruction;
+    uint32_t c;
+    uint32_t d;
+    int32_t e;
+    int32_t f;
+    uint64_t shift;
+    uint8_t buffer[4];
+    char string[256];
+
+    /* Detect free block number */
+    /*            if (prev_value != read_word(0x8003b48c)) {
+     prev_value = read_word(0x8003b48c);
+     fprintf(stderr, "0x8000ff54 now is 0x%08x (cycle %d)\n", prev_value, count);
+     }*/
+    /* Timer */
+    if ((special[8] & 0xffffff) == 0) { /* Timer reload */
+        special[8] = special[9] & 0xffffff;
+        if (special[9] & 0x02000000)
+            special[9] |= 0x04000000;   /* Overflow */
+        special[9] |= 0x02000000;   /* Interrupt */
+    } else {
+        special[8] = (special[8] - 1);
+    }
+    if ((special[9] & 0x03000000) == 0x03000000) {  /* Interrupt + IE */
+        if ((special[2] & 0x0401) == 0) { /* DA = 0 */
+            special[10] = pc0;
+            special[11] = pc1;
+            special[12] = pc2;
+            trap(14);
+        }
+    }
+    
+    instruction = read_word(pc1);
+    
+    if ((special[2] & 0x0400) == 0) {
+        special[10] = pc0;
+        special[11] = pc1;
+        special[12] = pc2;
+    }
+    count++;
+    if (debug != NULL) {
+        disassemble(pc1, instruction, string);
+        fprintf(debug, "% 8d PC=0x%08X %s\n", count, pc1, string);
+        /*            if (pc1 == 0x80032c08) {
+         debug_info();
+         exit(1);
+         }*/
+        /*            if (pc1 == 0x8000c7b8) {
+         debug_info();
+         exit(1);
+         }*/
+    }
+    /*        if (pc0 == 0x8000c078) {     // Driver letter setup
+     debug_info();
+     exit(1);
+     }*/
+    pc2 = pc1;
+    pc1 = pc0;
+    pc0 = pc1 + 4;
+    switch (instruction >> 24) {
+        case 0x01:  /* CONSTN */
+            REG_A = 0xffff0000 | IMM16;
+            break;
+        case 0x02:  /* CONSTH */
+            REG_A = (REG_A & 0xffff) | (IMM16 << 16);
+            break;
+        case 0x03:  /* CONST */
+            REG_A = IMM16;
+            break;
+        case 0x04:  /* MTSRIM */
+            c = (instruction >> 8) & 0xff;
+            if (c == 133)
+                WRITE_BP(IMM16);
+            else if (c == 134)
+                WRITE_FC(IMM16);
+            else
+                special[c] = IMM16;
+            /* !!! Add masks */
+            break;
+        case 0x05:  /* CONSTHZ */
+            REG_A = IMM16 << 16;
+            break;
+        case 0x08:  /* CLZ */
+            REG_C = clz(REG_B);
+            break;
+        case 0x09:  /* CLZ imm */
+            REG_C = clz(IMM);
+            break;
+        case 0x0a:  /* EXBYTE */
+            /* !!! Hard-coded big-endian */
+            c = REG_B & ~0xff;
+            if (READ_BP == 0) {
+                c |= (REG_A >> 24) & 0xff;
+            } else if (READ_BP == 1) {
+                c |= (REG_A >> 16) & 0xff;
+            } else if (READ_BP == 2) {
+                c |= (REG_A >> 8) & 0xff;
+            } else {
+                c |= REG_A & 0xff;
+            }
+            REG_C = c;
+            break;
+        case 0x0b:  /* EXBYTE imm */
+            /* !!! Hard-coded big-endian */
+            c = IMM & ~0xff;
+            if (READ_BP == 0) {
+                c |= (REG_A >> 24) & 0xff;
+            } else if (READ_BP == 1) {
+                c |= (REG_A >> 16) & 0xff;
+            } else if (READ_BP == 2) {
+                c |= (REG_A >> 8) & 0xff;
+            } else {
+                c |= REG_A & 0xff;
+            }
+            REG_C = c;
+            break;
+        case 0x0c:  /* INBYTE */
+            /* !!! Hard-coded big-endian */
+            c = REG_B & 0xff;
+            if (READ_BP == 0) {
+                c = (REG_A & ~0xff000000) | (c << 24);
+            } else if (READ_BP == 1) {
+                c = (REG_A & ~0x00ff0000) | (c << 16);
+            } else if (READ_BP == 2) {
+                c = (REG_A & ~0x0000ff00) | (c << 8);
+            } else {
+                c = (REG_A & ~0x000000ff) | c;
+            }
+            REG_C = c;
+            break;
+        case 0x0d:  /* INBYTE imm */
+            /* !!! Hard-coded big-endian */
+            c = IMM;
+            if (READ_BP == 0) {
+                c = (REG_A & ~0xff000000) | (c << 24);
+            } else if (READ_BP == 1) {
+                c = (REG_A & ~0x00ff0000) | (c << 16);
+            } else if (READ_BP == 2) {
+                c = (REG_A & ~0x0000ff00) | (c << 8);
+            } else {
+                c = (REG_A & ~0x000000ff) | c;
+            }
+            REG_C = c;
+            break;
+        case 0x10:    /* ADDS */
+            ALU(REG_A, REG_B, 0);
+            REG_C = REG_A + REG_B;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x11:    /* ADDS imm */
+            ALU(REG_A, IMM, 0);
+            REG_C = REG_A + IMM;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x12:    /* ADDU */
+            ALU(REG_A, REG_B, 0);
+            REG_C = REG_A + REG_B;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x13:    /* ADDU imm */
+            ALU(REG_A, IMM, 0);
+            REG_C = REG_A + IMM;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x14:    /* ADD */
+            ALU(REG_A, REG_B, 0);
+            REG_C = REG_A + REG_B;
+            break;
+        case 0x15:    /* ADD imm */
+            ALU(REG_A, IMM, 0);
+            REG_C = REG_A + IMM;
+            break;
+        case 0x16:  /* LOAD */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x02:
+                    REG_A = clgd5429_mem_read_word(REG_B / 4);
+                    break;
+                case 0x04:
+                    REG_A = read_word(REG_B);
+                    break;
+                case 0x14:
+                    c = REG_B & 3;
+                    WRITE_BP(c);
+                    REG_A = read_word(REG_B);
+                    break;
+                case 0x41:
+                    REG_A = read_isa(REG_B);
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x17:  /* LOAD imm */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x04:
+                    REG_A = read_word(IMM);
+                    break;
+                case 0x14:
+                    c = REG_B & 3;
+                    WRITE_BP(c);
+                    REG_A = read_word(IMM);
+                    break;
+                case 0x41:
+                    REG_A = read_isa(IMM);
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x18:    /* ADDCS */
+            c = ALU_CARRY;
+            ALU(REG_A, REG_B, c);
+            REG_C = REG_A + REG_B + c;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x19:    /* ADDCS imm */
+            c = ALU_CARRY;
+            ALU(REG_A, IMM, c);
+            REG_C = REG_A + IMM + c;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x1a:    /* ADDCU */
+            c = ALU_CARRY;
+            ALU(REG_A, REG_B, c);
+            REG_C = REG_A + REG_B + c;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x1b:    /* ADDCU imm */
+            c = ALU_CARRY;
+            ALU(REG_A, IMM, c);
+            REG_C = REG_A + IMM + c;
+            /* !!! Should cause a trap in case of overflow */
+            break;
+        case 0x1c:    /* ADDC */
+            c = ALU_CARRY;
+            ALU(REG_A, REG_B, c);
+            REG_C = REG_A + REG_B + c;
+            break;
+        case 0x1d:    /* ADDC imm */
+            c = ALU_CARRY;
+            ALU(REG_A, IMM, c);
+            REG_C = REG_A + IMM + c;
+            break;
+        case 0x1e:  /* STORE */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x00:
+                    c = REG_B;
+                    d = REG_A;
+                    e = clgd5429_mem_write_byte(c / 4, d & 0xff);
+                    if (e == -1) {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
+                    break;
+                case 0x02:
+                    c = REG_B;
+                    d = REG_A;
+                    e = clgd5429_mem_write_word(c / 4, d & 0xffff);
+                    if (e == -1) {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
+                    break;
+                case 0x04:
+                    /*                        if (REG_B == 0x80022cb0) {
+                     fprintf(stderr, "Watching address 0x%08x now written with 0x%08x\n", REG_B, REG_A);
+                     if (REG_A == 1) {
+                     debug_info();
+                     exit(1);
+                     }
+                     }*/
+                    write_word(REG_B, REG_A);
+                    break;
+                case 0x41:
+                    write_isa(REG_B, REG_A);
+                    break;
+                case 0x42:
+                    write_isaw(REG_B, REG_A);
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x1f:  /* STORE */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x04:
+                    write_word(IMM, REG_A);
+                    break;
+                case 0x41:
+                    write_isa(IMM, REG_A);
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x20:    /* SUBS */
+            ALU(REG_A, -REG_B, 0);
+            REG_C = REG_A - REG_B;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x21:    /* SUBS imm */
+            ALU(REG_A, -IMM, 0);
+            REG_C = REG_A - IMM;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x22:    /* SUBU */
+            ALU(REG_A, -REG_B, 0);
+            REG_C = REG_A - REG_B;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x23:    /* SUBU imm */
+            ALU(REG_A, -IMM, 0);
+            REG_C = REG_A - IMM;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x24:    /* SUB */
+            ALU(REG_A, -REG_B, 0);
+            REG_C = REG_A - REG_B;
+            break;
+        case 0x25:    /* SUB imm */
+            ALU(REG_A, -IMM, 0);
+            REG_C = REG_A - IMM;
+            break;
+        case 0x28:    /* SUBCS */
+            c = ALU_CARRY;
+            ALU(REG_A, ~REG_B, c);
+            REG_C = REG_A + ~REG_B + c;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x29:    /* SUBCS imm */
+            c = ALU_CARRY;
+            ALU(REG_A, ~IMM, c);
+            REG_C = REG_A + ~IMM + c;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x2a:    /* SUBCU */
+            c = ALU_CARRY;
+            ALU(REG_A, ~REG_B, c);
+            REG_C = REG_A + ~REG_B + c;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x2b:    /* SUBCU imm */
+            c = ALU_CARRY;
+            ALU(REG_A, ~IMM, c);
+            REG_C = REG_A + ~IMM + c;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x2c:    /* SUBC */
+            c = ALU_CARRY;
+            ALU(REG_A, ~REG_B, c);
+            REG_C = REG_A + ~REG_B + c;
+            break;
+        case 0x2d:    /* SUBC imm */
+            c = ALU_CARRY;
+            ALU(REG_A, ~IMM, c);
+            REG_C = REG_A + ~IMM + c;
+            break;
+        case 0x2e:    /* CPBYTE */
+            c = REG_A ^ REG_B;
+            if ((c & 0xff) == 0 || (c & 0xff00) == 0 || (c & 0xff0000) == 0 || (c & 0xff000000) == 0) {
+                REG_C = AM29K_TRUE;
+            } else {
+                REG_C = AM29K_FALSE;
+            }
+            break;
+        case 0x2f:    /* CPBYTE imm */
+            ALU(REG_A, IMM, 0);
+            REG_C = REG_A + IMM;
+            break;
+        case 0x30:    /* SUBRS */
+            ALU(-REG_A, REG_B, 0);
+            REG_C = REG_B - REG_A;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x31:    /* SUBRS imm */
+            ALU(-REG_A, IMM, 0);
+            REG_C = IMM - REG_A;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x32:    /* SUBRU */
+            ALU(-REG_A, REG_B, 0);
+            /* !!! Generate trap if unsigned value overflows */
+            REG_C = REG_B - REG_A;
+            break;
+        case 0x33:    /* SUBRU imm */
+            ALU(-REG_A, IMM, 0);
+            REG_C = IMM - REG_A;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x34:    /* SUBR */
+            ALU(-REG_A, REG_B, 0);
+            REG_C = REG_B - REG_A;
+            break;
+        case 0x35:    /* SUBR imm */
+            ALU(-REG_A, IMM, 0);
+            REG_C = IMM - REG_A;
+            break;
+        case 0x36:  /* LOADM */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x04:
+                    c = REG_B;
+                    d = REG_AA(_RA);
+                    while (1) {
+                        regs[d] = read_word(c);
+                        c += 4;
+                        if (special[135] == 0)
+                            break;
+                        special[135] = (special[135] - 1) & 0xff;
+                        d = (((d + 1) & 0x7f) | (d & 0x80));
+                    }
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x38:    /* SUBRCS */
+            c = ALU_CARRY;
+            ALU(~REG_A, REG_B, c);
+            REG_C = ~REG_A + REG_B + c;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x39:    /* SUBRCS imm */
+            c = ALU_CARRY;
+            ALU(~REG_A, IMM, c);
+            REG_C = ~REG_A + IMM + c;
+            /* !!! Generate trap if signed value overflows */
+            break;
+        case 0x3a:    /* SUBRCU */
+            c = ALU_CARRY;
+            ALU(~REG_A, REG_B, c);
+            REG_C = ~REG_A + REG_B + c;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x3b:    /* SUBRCU imm */
+            c = ALU_CARRY;
+            ALU(~REG_A, IMM, c);
+            REG_C = ~REG_A + IMM + c;
+            /* !!! Generate trap if unsigned value overflows */
+            break;
+        case 0x3c:    /* SUBRC */
+            c = ALU_CARRY;
+            ALU(~REG_A, REG_B, c);
+            REG_C = ~REG_A + REG_B + c;
+            break;
+        case 0x3d:    /* SUBRC imm */
+            c = ALU_CARRY;
+            ALU(~REG_A, IMM, c);
+            REG_C = ~REG_A + IMM + c;
+            break;
+        case 0x3e:  /* STOREM */
+            switch ((instruction >> 16) & 0xff) {
+                case 0x04:
+                    c = REG_B;
+                    d = REG_AA(_RA);
+                    while (1) {
+                        write_word(c, regs[d]);
+                        c += 4;
+                        if (special[135] == 0)
+                            break;
+                        special[135] = (special[135] - 1) & 0xff;
+                        d = (((d + 1) & 0x7f) | (d & 0x80));
+                    }
+                    break;
+                default:
+                    fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                    debug_info();
+                    exit(1);
+            }
+            break;
+        case 0x40:    /* CPLT */
+            e = REG_A;
+            f = REG_B;
+            REG_C = (e < f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x41:    /* CPLT imm */
+            e = REG_A;
+            f = IMM;
+            REG_C = (e < f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x42:    /* CPLTU */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c < d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x43:    /* CPLTU imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c < d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x44:    /* CPLE */
+            e = REG_A;
+            f = REG_B;
+            REG_C = (e <= f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x45:    /* CPLE imm */
+            e = REG_A;
+            f = IMM;
+            REG_C = (e <= f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x46:    /* CPLEU */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c <= d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x47:    /* CPLEU imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c <= d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x48:    /* CPGT */
+            e = REG_A;
+            f = REG_B;
+            REG_C = (e > f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x49:    /* CPGT imm */
+            e = REG_A;
+            f = IMM;
+            REG_C = (e > f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4a:    /* CPGTU */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c > d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4b:    /* CPGTU imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c > d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4c:    /* CPGE */
+            e = REG_A;
+            f = REG_B;
+            REG_C = (e >= f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4d:    /* CPGE imm */
+            e = REG_A;
+            f = IMM;
+            REG_C = (e >= f) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4e:    /* CPGEU */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c >= d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x4f:    /* CPGEU imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c >= d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x50:    /* ASLT */
+            e = REG_A;
+            f = REG_B;
+            if (e < f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x51:    /* ASLT imm */
+            e = REG_A;
+            f = IMM;
+            if (e < f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x52:    /* ASLTU */
+            c = REG_A;
+            d = REG_B;
+            if (c < d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x53:    /* ASLTU imm */
+            c = REG_A;
+            d = IMM;
+            if (c < d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x54:    /* ASLE */
+            e = REG_A;
+            f = REG_B;
+            if (e <= f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x55:    /* ASLE imm */
+            e = REG_A;
+            f = IMM;
+            if (e <= f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x56:    /* ASLEU */
+            c = REG_A;
+            d = REG_B;
+            if (c <= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x57:    /* ASLEU imm */
+            c = REG_A;
+            d = IMM;
+            if (c <= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x58:    /* ASGT */
+            e = REG_A;
+            f = REG_B;
+            if (e > f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x59:    /* ASGT imm */
+            e = REG_A;
+            f = IMM;
+            if (e > f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5a:    /* ASGTU */
+            c = REG_A;
+            d = REG_B;
+            if (c >= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5b:    /* ASGTU imm */
+            c = REG_A;
+            d = IMM;
+            if (c >= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5c:    /* ASGE */
+            e = REG_A;
+            f = REG_B;
+            if (e >= f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5d:    /* ASGE imm */
+            e = REG_A;
+            f = IMM;
+            if (e >= f)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5e:    /* ASGEU */
+            c = REG_A;
+            d = REG_B;
+            if (c >= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x5f:    /* ASGEU imm */
+            c = REG_A;
+            d = IMM;
+            if (c >= d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x60:    /* CPEQ */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c == d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x61:    /* CPEQ imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c == d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x62:    /* CPNEQ */
+            c = REG_A;
+            d = REG_B;
+            REG_C = (c != d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x63:    /* CPNEQ imm */
+            c = REG_A;
+            d = IMM;
+            REG_C = (c != d) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+        case 0x64:  /* MUL */
+            c = REG_B;
+            d = (special[131] & 1) ? REG_A : 0;
+            ALU(c, d, 0);
+            e = c + d;
+            d = e & 0x80000000;
+            if (((c ^ d) & 0x80000000) == 0 && ((c ^ e) & 0x80000000) != 0) {
+                d ^= 0x80000000;
+            }
+            special[131] = (special[131] >> 1) | (e << 31);
+            c = (e >> 1) | d;
+            REG_C = c;
+            break;
+        case 0x65:  /* MUL imm */
+            c = IMM;
+            d = (special[131] & 1) ? REG_A : 0;
+            ALU(c, d, 0);
+            e = c + d;
+            d = e & 0x80000000;
+            if (((c ^ d) & 0x80000000) == 0 && ((c ^ e) & 0x80000000) != 0) {
+                d ^= 0x80000000;
+            }
+            special[131] = (special[131] >> 1) | (e << 31);
+            c = (e >> 1) | d;
+            REG_C = c;
+            break;
+        case 0x66:  /* MULL */
+            c = REG_B;
+            d = (special[131] & 1) ? REG_A : 0;
+            ALU(c, 0 - d, 0);
+            e = c - d;
+            d = e & 0x80000000;
+            if ((c ^ d) & (c ^ e) & 0x80000000) {
+                d ^= 0x80000000;
+            }
+            special[131] = (special[131] >> 1) | (e << 31);
+            c = (e >> 1) | d;
+            REG_C = c;
+            break;
+        case 0x67:  /* MULL imm */
+            c = IMM;
+            d = (special[131] & 1) ? REG_A : 0;
+            ALU(c, 0 - d, 0);
+            e = c - d;
+            d = e & 0x80000000;
+            if ((c ^ d) & (c ^ e) & 0x80000000) {
+                d ^= 0x80000000;
+            }
+            special[131] = (special[131] >> 1) | (e << 31);
+            c = (e >> 1) | d;
+            REG_C = c;
+            break;
+        case 0x68:  /* DIV0 */
+            special[132] |= 0x0800; /* DF */
+            c = REG_B;
+            if (c & 0x80000000)
+                special[132] |= 0x0200;
+            else
+                special[132] &= ~0x0200;
+            c = (c << 1) | (special[131] >> 31);
+            special[131] <<= 1;
+            REG_C = c;
+            break;
+        case 0x69:  /* DIV0 imm */
+            special[132] |= 0x0800; /* DF */
+            c = IMM;
+            if (c & 0x80000000)
+                special[132] |= 0x0200;
+            else
+                special[132] &= ~0x0200;
+            c = (c << 1) | (special[131] >> 31);
+            special[131] <<= 1;
+            REG_C = c;
+            break;
+        case 0x6a:  /* DIV */
+            c = REG_A;
+            d = REG_B;
+            if (special[132] & 0x0800) {
+                if (c >= d)
+                    e = 1;
+                else
+                    e = 0;
+                c = c - d;
+            } else {
+                if (c + d < c)
+                    e = 0;
+                else
+                    e = 1;
+                c = c + d;
+            }
+            d = ((special[132] >> 9) ^ e) & 1;
+            special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
+            c = (c << 1) | (special[131] >> 31);
+            special[131] = (special[131] << 1) | d;
+            REG_C = c;
+            break;
+        case 0x6b:  /* DIV imm */
+            c = REG_A;
+            d = IMM;
+            if (special[132] & 0x0800) {
+                if (c >= d)
+                    e = 1;
+                else
+                    e = 0;
+                c = c - d;
+            } else {
+                if (c + d < c)
+                    e = 0;
+                else
+                    e = 1;
+                c = c + d;
+            }
+            d = ((special[132] >> 9) ^ e) & 1;
+            special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
+            c = (c << 1) | (special[131] >> 31);
+            special[131] = (special[131] << 1) | d;
+            REG_C = c;
+            break;
+        case 0x6c:  /* DIVL */
+            c = REG_A;
+            d = REG_B;
+            if (special[132] & 0x0800) {
+                if (c >= d)
+                    e = 1;
+                else
+                    e = 0;
+                c = c - d;
+            } else {
+                if (c + d < c)
+                    e = 0;
+                else
+                    e = 1;
+                c = c + d;
+            }
+            d = ((special[132] >> 9) ^ e) & 1;
+            special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
+            special[131] = (special[131] << 1) | d;
+            REG_C = c;
+            break;
+        case 0x6d:  /* DIVL imm */
+            c = REG_A;
+            d = IMM;
+            if (special[132] & 0x0800) {
+                if (c >= d)
+                    e = 1;
+                else
+                    e = 0;
+                c = c - d;
+            } else {
+                if (c + d < c)
+                    e = 0;
+                else
+                    e = 1;
+                c = c + d;
+            }
+            d = ((special[132] >> 9) ^ e) & 1;
+            special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
+            special[131] = (special[131] << 1) | d;
+            REG_C = c;
+            break;
+        case 0x6e:  /* DIVREM */
+            if (special[132] & 0x0800) {
+                c = REG_A;
+            } else {
+                ALU(REG_A, REG_B, 0);
+                c = REG_A + REG_B;
+            }
+            REG_C = c;
+            break;
+        case 0x6f:  /* DIVREM imm */
+            if (special[132] & 0x0800) {
+                c = REG_A;
+            } else {
+                ALU(REG_A, IMM, 0);
+                c = REG_A + IMM;
+            }
+            REG_C = c;
+            break;
+        case 0x70:    /* ASEQ */
+            c = REG_A;
+            d = REG_B;
+            if (c == d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x71:    /* ASEQ imm */
+            c = REG_A;
+            d = IMM;
+            if (c == d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x72:    /* ASNEQ */
+            c = REG_A;
+            d = REG_B;
+            if (c != d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x73:    /* ASNEQ imm */
+            c = REG_A;
+            d = IMM;
+            if (c != d)
+                ;
+            else
+                trap((instruction >> 16) & 0xff);
+            break;
+        case 0x74:  /* MULU */
+            if (special[131] & 1) {
+                ALU(REG_B, REG_A, 0);
+                c = REG_B + REG_A;
+            } else {
+                ALU(REG_B, 0, 0);
+                c = REG_B;
+            }
+            special[131] = (special[131] >> 1) | (c << 31);
+            c = (c >> 1) | ((special[132] & 0x80) << 24);
+            REG_C = c;
+            break;
+        case 0x75:  /* MULU imm */
+            if (special[131] & 1) {
+                ALU(IMM, REG_A, 0);
+                c = IMM + REG_A;
+            } else {
+                ALU(IMM, 0, 0);
+                c = IMM;
+            }
+            special[131] = (special[131] >> 1) | (c << 31);
+            c = (c >> 1) | ((special[132] & 0x80) << 24);
+            REG_C = c;
+            break;
+        case 0x78:  /* INHW */
+            /* !!! Hard-coded big-endian */
+            c = REG_B & 0xffff;
+            if (READ_BP & 2) {
+                c = (REG_A & ~0x0000ffff) | c;
+            } else {
+                c = (REG_A & ~0xffff0000) | (c << 16);
+            }
+            REG_C = c;
+            break;
+        case 0x79:  /* INHW imm */
+            /* !!! Hard-coded big-endian */
+            c = IMM & 0xffff;
+            if (READ_BP & 2) {
+                c = (REG_A & ~0x0000ffff) | c;
+            } else {
+                c = (REG_A & ~0xffff0000) | (c << 16);
+            }
+            REG_C = c;
+            break;
+        case 0x7a:  /* EXTRACT */
+            /*                fprintf(stderr, "%08x %08x (%d) = ", REG_A, REG_B, special[134]);*/
+            shift = (((uint64_t) REG_A) << 32) | REG_B;
+            shift <<= READ_FC;
+            REG_C = (uint32_t) (shift >> 32);
+            /*                fprintf(stderr, "%08x\n", REG_C);*/
+            break;
+        case 0x7b:  /* EXTRACT imm */
+            shift = (((uint64_t) REG_A) << 32) | IMM;
+            shift <<= READ_FC;
+            REG_C = (uint32_t) (shift >> 32);
+            break;
+        case 0x7c:  /* EXHW */
+            /* !!! Hard-coded big-endian */
+            c = REG_B & 0xffff0000;
+            if (READ_BP & 2) {
+                d = REG_A;
+            } else {
+                d = REG_A >> 16;
+            }
+            REG_C = c | (d & 0xffff);
+            break;
+        case 0x7d:  /* EXHW imm */
+            /* !!! Hard-coded big-endian */
+            c = IMM & 0xffff0000;
+            if (READ_BP & 2) {
+                d = REG_A;
+            } else {
+                d = REG_A >> 16;
+            }
+            REG_C = c | (d & 0xffff);
+            break;
+        case 0x7e:  /* EXHWS */
+            /* !!! Hard-coded big-endian */
+            if (READ_BP & 2) {
+                d = REG_A;
+            } else {
+                d = REG_A >> 16;
+            }
+            d &= 0xffff;
+            if (d >= 0x8000)
+                d -= 0x10000;
+            REG_C = d;
+            break;
+        case 0x80:    /* SLL */
+            c = REG_A << (REG_B & 0x1f);
+            REG_C = c;
+            break;
+        case 0x81:    /* SLL imm */
+            c = REG_A << (IMM & 0x1f);
+            REG_C = c;
+            break;
+        case 0x82:    /* SRL */
+            c = REG_A >> (REG_B & 0x1f);
+            REG_C = c;
+            break;
+        case 0x83:    /* SRL imm */
+            c = REG_A >> (IMM & 0x1f);
+            REG_C = c;
+            break;
+        case 0x86:    /* SRA */
+            e = REG_A;
+            e >>= REG_B & 0x1f;
+            REG_C = e;
+            break;
+        case 0x87:    /* SRA imm */
+            e = REG_A;
+            e >>= IMM & 0x1f;
+            REG_C = e;
+            break;
+        case 0x88:  /* IRET */
+            pc0 = special[10];
+            pc1 = special[11];
+            special[2] = special[1];
+            break;
+        case 0x89:  /* HALT */
+            fprintf(stderr, "HALT detected.\n");
+            exit(1);
+            break;
+        case 0x8c:  /* IRETINV */
+            pc0 = special[10];
+            pc1 = special[11];
+            special[2] = special[1];
+            break;
+        case 0x90:    /* AND */
+            c = REG_A & REG_B;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x91:    /* AND imm */
+            c = REG_A & IMM;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x92:    /* OR */
+            c = REG_A | REG_B;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x93:    /* OR imm */
+            c = REG_A | IMM;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x94:    /* XOR */
+            c = REG_A ^ REG_B;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x95:    /* XOR imm */
+            c = REG_A ^ IMM;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x96:    /* XNOR */
+            c = REG_A ^ REG_B;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x97:    /* XNOR imm */
+            c = REG_A ^ IMM;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x98:    /* NOR */
+            c = REG_A | REG_B;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x99:    /* NOR imm */
+            c = REG_A | IMM;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x9a:    /* NAND */
+            c = REG_A & REG_B;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x9b:    /* NAND imm */
+            c = REG_A & IMM;
+            REG_C = ~c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x9c:    /* ANDN */
+            c = REG_A & ~REG_B;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x9d:    /* ANDN imm */
+            c = REG_A & ~IMM;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0x9e:  /* SETIP */
+            special[128] = REG_CA(_RC) * 4;
+            special[129] = REG_AA(_RA) * 4;
+            special[130] = REG_BA(_RB) * 4;
+            break;
+        case 0xa0:  /* JMP rel */
+            pc0 = pc2 + (IMM16S << 2);
+            break;
+        case 0xa1:  /* JMP abs */
+            pc0 = IMM16 << 2;
+            break;
+        case 0xa4:  /* JMPF rel */
+            if ((REG_A & 0x80000000) == 0) {
+                pc0 = pc2 + (IMM16S << 2);
+            }
+            break;
+        case 0xa5:  /* JMPF abs */
+            if ((REG_A & 0x80000000) == 0) {
+                pc0 = IMM16 << 2;
+            }
+            break;
+        case 0xa8:  /* CALL rel */
+            pc0 = pc2 + (IMM16S << 2);
+            REG_A = pc2 + 8;
+            break;
+        case 0xa9:  /* CALL abs */
+            pc0 = IMM16 << 2;
+            REG_A = pc2 + 8;
+            break;
+        case 0xaa:    /* ORN */
+            c = REG_A | ~REG_B;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0xab:    /* ORN imm */
+            c = REG_A | ~IMM;
+            REG_C = c;
+            ALU_SIMPLE(c);
+            break;
+        case 0xac:  /* JMPT rel */
+            if ((REG_A & 0x80000000) != 0) {
+                pc0 = pc2 + (IMM16S << 2);
+            }
+            break;
+        case 0xad:  /* JMPT abs */
+            if ((REG_A & 0x80000000) != 0) {
+                pc0 = IMM16 << 2;
+            }
+            break;
+        case 0xb4:  /* JMPFDEC rel */
+            c = REG_A;
+            REG_A = c - 1;
+            if ((c & 0x80000000) == 0) {
+                pc0 = pc2 + (IMM16S << 2);
+            }
+            break;
+        case 0xb5:  /* JMPFDEC abs */
+            c = REG_A;
+            REG_A = c - 1;
+            if ((c & 0x80000000) == 0) {
+                pc0 = IMM16 << 2;
+            }
+            break;
+        case 0xc0:  /* JMPI */
+            pc0 = REG_B;
+            break;
+        case 0xc4:  /* JMPFI */
+            if ((REG_A & 0x80000000) == 0) {
+                pc0 = REG_B;
+            }
+            break;
+        case 0xc6:  /* MFSR */
+            c = (instruction >> 8) & 0xff;
+            if (c == 133)   /* BP */
+                c = READ_BP;
+            else if (c == 134)   /* FC */
+                c = READ_FC;
+            else
+                c = special[c];
+            REG_C = c;
+            break;
+        case 0xc8:  /* CALLI */
+            pc0 = REG_B;
+            REG_A = pc2 + 8;
+            break;
+        case 0xcc:  /* JMPTI */
+            if ((REG_A & 0x80000000) != 0) {
+                pc0 = REG_B;
+            }
+            break;
+        case 0xce:  /* MTSR */
+            c = (instruction >> 8) & 0xff;
+            if (c == 133) {
+                WRITE_BP(REG_B);
+            } else if (c == 134) {
+                WRITE_FC(REG_B);
+            } else {
+                special[c] = REG_B;
+            }
+            if (c == 0) {   /* VAB */
+                static int first_time = 1;
+                
+                if (first_time) {
+                    first_time = 0;
+                    
+                    /*
+                     ** Patch the floppy disk code
+                     */
+                    write_word(0x8002086c, 0x4e618260); /* Support two drives */
+                    write_word(0x80020878, 0xfc000280); /* Call the emulator */
+                    
+                    /*
+                     ** Patch a math emulator strange error
+                     ** It makes it to crash with CONVERT gr96,lr4,0,0,2,1 because fraction is non-zero
+                     ** Probably the Am29000 was replaced with an Am29050 and I inserted
+                     ** more code without testing in the old processor.
+                     */
+                    regs[95] = 0x00040040;  /* Avoid CONVERT trap + MULTIPLY trap */
+                    write_word(0x800097fc, 0x70406161); /* NOP */
+                    /*                        write_word(0x800097fc, 0x05005f04);  gr95 = 0x00040000 this bit avoids the trap */
+                    
+                    /*
+                     ** Patch the Ajedrez button (chess) calling a non-existant file
+                     */
+                    /*write_word(0x8000ba74, 0x00000000);*/ /* Doesn't work */
+                    
+                }
+            }
+            /* !!! Add masks */
+            break;
+        case 0xd7:  /* EMULATE */
+            special[129] = REG_AA(_RA) * 4;
+            special[130] = REG_BA(_RB) * 4;
+            trap((instruction >> 16) & 0xff);
+            break;
+        case 0xde:  /* MULTM */
+        case 0xdf:  /* MULTMU */
+        case 0xe0:  /* MULTIPLY */
+        case 0xe1:  /* DIVIDE */
+        case 0xe2:  /* MULTIPLU */
+        case 0xe3:  /* DIVIDU */
+        case 0xe4:  /* CONVERT */
+        case 0xe5:  /* SQRT */
+        case 0xe6:  /* CLASS */
+        case 0xe8:  /* MTACC */
+        case 0xe9:  /* MFACC */
+        case 0xea:  /* FEQ */
+        case 0xeb:  /* DEQ */
+        case 0xec:  /* FGT */
+        case 0xed:  /* DGT */
+        case 0xee:  /* FLT */
+        case 0xef:  /* DLT */
+        case 0xf0:  /* FADD */
+        case 0xf1:  /* DADD */
+        case 0xf2:  /* FSUB */
+        case 0xf3:  /* DSUB */
+        case 0xf4:  /* FMUL */
+        case 0xf5:  /* DMUL */
+        case 0xf6:  /* FDIV */
+        case 0xf7:  /* DDIV */
+            /*                fprintf(stderr, "%08x%08x\n", regs[REG_AA(_RA)], regs[REG_AA(_RA) + 1]);*/
+            /*                fprintf(stderr, "%08x%08x * %08x%08x\n", regs[REG_AA(_RA)], regs[REG_AA(_RA) + 1], regs[REG_BA(_RB)], regs[REG_BA(_RB) + 1]);*/
+            special[128] = REG_CA(_RC) * 4;
+            special[129] = REG_AA(_RA) * 4;
+            special[130] = REG_BA(_RB) * 4;
+            /*                fprintf(stderr, "INDC:0x%08x INDA:0x%08x INDB:0x%08x\n", special[128], special[129], special[130]);*/
+            trap((instruction >> 24) & 0x3f);
+            /*                fprintf(stderr, "Calling trap...\n");*/
+            break;
+        case 0xfc:  /* Services */
+            pc0 = REG_B;
+            switch ((instruction >> 8) & 0xff) {
+                case 0x01:
+                    /* Read disk, gr111=track and head, gr113=target address, gr77=bytes */
+                    if (debug) {
+                        fprintf(stderr, "Reading track %d to 0x%08x\n", regs[111], regs[113]);
+                    }
+                    d = regs[113];
+                    f = (regs[77] > 9216) ? 9216 : regs[77];
+                    fseek(floppy, regs[111] * 9216, SEEK_SET);
+                    for (e = 0; e < f; e += 4) {
+                        fread(buffer, 1, 4, floppy);
+                        instruction = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+                        write_word(d, instruction);
+                        d += 4;
+                    }
+                    break;
+                case 0x02:
+                    floppy_scsi(regs[REG_AA(130)], regs[REG_AA(131)], regs[REG_AA(132)], regs[REG_AA(133)], regs[REG_AA(134)], regs[REG_AA(135)]);
+                    break;
+                default:
+                    fprintf(stderr, "Unknown service requested (PC = 0x%08x)\n", pc1);
+                    exit(1);
+            }
+            break;
+        default:
+            fprintf(stderr, "Instruction 0x%08x not implemented (PC = 0x%08x)\n", instruction, pc1);
+            debug_info();
+            exit(1);
+    }
+}

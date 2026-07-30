@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F4CEF14330186A7C000D7D9E /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4CEF13C30183099000D7D9E /* SDL2.framework */; };
+		F4CEF14430186A7C000D7D9E /* SDL2.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F4CEF13C30183099000D7D9E /* SDL2.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		F464544A301829A800CB4DC5 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -16,10 +21,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 1;
 		};
+		F4CEF14530186A7C000D7D9E /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				F4CEF14430186A7C000D7D9E /* SDL2.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F464544C301829A800CB4DC5 /* am29000 */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = am29000; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4CEF13C30183099000D7D9E /* SDL2.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = SDL2.framework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +52,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4CEF14330186A7C000D7D9E /* SDL2.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -45,6 +63,7 @@
 			isa = PBXGroup;
 			children = (
 				F464544E301829A800CB4DC5 /* am29000 */,
+				F464545B30182A4700CB4DC5 /* Frameworks */,
 				F464544D301829A800CB4DC5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -57,6 +76,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		F464545B30182A4700CB4DC5 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F4CEF13C30183099000D7D9E /* SDL2.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -67,6 +94,7 @@
 				F4645448301829A800CB4DC5 /* Sources */,
 				F4645449301829A800CB4DC5 /* Frameworks */,
 				F464544A301829A800CB4DC5 /* CopyFiles */,
+				F4CEF14530186A7C000D7D9E /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -245,7 +273,15 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(LOCAL_LIBRARY_DIR)/Frameworks",
+					"$(PROJECT_DIR)",
+				);
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REEXPORTED_LIBRARY_PATHS = "";
+				USER_HEADER_SEARCH_PATHS = "";
 			};
 			name = Debug;
 		};
@@ -253,7 +289,16 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(LOCAL_LIBRARY_DIR)/Frameworks",
+					"$(PROJECT_DIR)",
+				);
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/";
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REEXPORTED_LIBRARY_PATHS = "";
+				USER_HEADER_SEARCH_PATHS = "";
 			};
 			name = Release;
 		};

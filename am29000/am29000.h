@@ -85,6 +85,7 @@ extern uint32_t pc1;
 extern uint32_t pc2;
 
 extern uint32_t count;
+extern uint32_t endianness;
 
 extern int read_byte(uint32_t);
 extern void write_byte(uint32_t, uint32_t);

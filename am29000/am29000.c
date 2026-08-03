@@ -1,11 +1,12 @@
 /*
-** Am29000 processor emulator
-**
-** by Oscar Toledo G.
-** https://nanochess.org/
-**
-** Creation date: Jul/30/2026.
-*/
+ ** Am29000 processor emulator
+ **
+ ** by Oscar Toledo G.
+ ** https://nanochess.org/
+ **
+ ** Creation date: Jul/30/2026.
+ ** Revision date: Aug/03/2026. Added endianness change support.
+ */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -78,14 +79,14 @@ uint32_t pc1;
 uint32_t pc2;
 
 uint32_t count;
+uint32_t endianness;
 
 /*
  ** Read a byte
  */
 int read_byte(uint32_t addr)
 {
-    /* !!! Hard-coded for big-endian */
-    return (read_word(addr) >> (8 * (~addr & 3))) & 0xff;
+    return (read_word(addr) >> (8 * ((addr ^ endianness) & 3))) & 0xff;
 }
 
 /*
@@ -96,10 +97,9 @@ void write_byte(uint32_t addr, uint32_t byte)
     uint32_t word;
     
     byte &= 0xff;
-    /* !!! Hard-coded for big-endian */
     word = read_word(addr);
-    word &= ~(0xff000000u >> (8 * (addr & 3)));
-    word |= byte << (8 * (~addr & 3));
+    word &= ~(0x000000ffu << (8 * ((addr ^ endianness) & 3)));
+    word |= byte << (8 * ((addr ^ endianness) & 3));
     write_word(addr, word);
 }
 
@@ -358,7 +358,7 @@ void am29000_emulate(void)
     
     instruction = read_word(pc1);   /* Read the next instruction to execute */
     
-    if ((special[2] & 0x0400) == 0) {
+    if ((special[2] & 0x0400) == 0) {   /* Update PCs only if not in Freeze mode */
         special[10] = pc0;
         special[11] = pc1;
         special[12] = pc2;
@@ -399,8 +399,16 @@ void am29000_emulate(void)
                 WRITE_BP(IMM16);
             else if (c == 134)
                 WRITE_FC(IMM16);
-            else
+            else {
                 special[c] = IMM16;
+                if (c == 3) {
+                    if ((special[c] & 4) == 0) {    /* BO = 0 */
+                        endianness = 0; /* Big-endian */
+                    } else {    /* BO = 1 */
+                        endianness = 3; /* Little-endian */
+                    }
+                }
+            }
             /* !!! Add masks */
             break;
         case 0x05:  /* CONSTHZ */
@@ -413,13 +421,13 @@ void am29000_emulate(void)
             REG_C = clz(IMM);
             break;
         case 0x0a:  /* EXBYTE */
-            /* !!! Hard-coded big-endian */
             c = REG_B & ~0xff;
-            if (READ_BP == 0) {
+            d = READ_BP ^ endianness;
+            if (d == 3) {
                 c |= (REG_A >> 24) & 0xff;
-            } else if (READ_BP == 1) {
+            } else if (d == 2) {
                 c |= (REG_A >> 16) & 0xff;
-            } else if (READ_BP == 2) {
+            } else if (d == 1) {
                 c |= (REG_A >> 8) & 0xff;
             } else {
                 c |= REG_A & 0xff;
@@ -427,13 +435,13 @@ void am29000_emulate(void)
             REG_C = c;
             break;
         case 0x0b:  /* EXBYTE imm */
-            /* !!! Hard-coded big-endian */
             c = IMM & ~0xff;
-            if (READ_BP == 0) {
+            d = READ_BP ^ endianness;
+            if (d == 3) {
                 c |= (REG_A >> 24) & 0xff;
-            } else if (READ_BP == 1) {
+            } else if (d == 2) {
                 c |= (REG_A >> 16) & 0xff;
-            } else if (READ_BP == 2) {
+            } else if (d == 1) {
                 c |= (REG_A >> 8) & 0xff;
             } else {
                 c |= REG_A & 0xff;
@@ -441,13 +449,13 @@ void am29000_emulate(void)
             REG_C = c;
             break;
         case 0x0c:  /* INBYTE */
-            /* !!! Hard-coded big-endian */
             c = REG_B & 0xff;
-            if (READ_BP == 0) {
+            d = READ_BP ^ endianness;
+            if (d == 3) {
                 c = (REG_A & ~0xff000000) | (c << 24);
-            } else if (READ_BP == 1) {
+            } else if (d == 2) {
                 c = (REG_A & ~0x00ff0000) | (c << 16);
-            } else if (READ_BP == 2) {
+            } else if (d == 1) {
                 c = (REG_A & ~0x0000ff00) | (c << 8);
             } else {
                 c = (REG_A & ~0x000000ff) | c;
@@ -455,13 +463,13 @@ void am29000_emulate(void)
             REG_C = c;
             break;
         case 0x0d:  /* INBYTE imm */
-            /* !!! Hard-coded big-endian */
             c = IMM;
-            if (READ_BP == 0) {
+            d = READ_BP ^ endianness;
+            if (d == 3) {
                 c = (REG_A & ~0xff000000) | (c << 24);
-            } else if (READ_BP == 1) {
+            } else if (d == 2) {
                 c = (REG_A & ~0x00ff0000) | (c << 16);
-            } else if (READ_BP == 2) {
+            } else if (d == 1) {
                 c = (REG_A & ~0x0000ff00) | (c << 8);
             } else {
                 c = (REG_A & ~0x000000ff) | c;
@@ -1268,9 +1276,9 @@ void am29000_emulate(void)
             REG_C = c;
             break;
         case 0x78:  /* INHW */
-            /* !!! Hard-coded big-endian */
             c = REG_B & 0xffff;
-            if (READ_BP & 2) {
+            d = READ_BP ^ endianness;
+            if ((d & 2) == 0) {
                 c = (REG_A & ~0x0000ffff) | c;
             } else {
                 c = (REG_A & ~0xffff0000) | (c << 16);
@@ -1278,9 +1286,9 @@ void am29000_emulate(void)
             REG_C = c;
             break;
         case 0x79:  /* INHW imm */
-            /* !!! Hard-coded big-endian */
             c = IMM & 0xffff;
-            if (READ_BP & 2) {
+            d = READ_BP ^ endianness;
+            if ((d & 2) == 0) {
                 c = (REG_A & ~0x0000ffff) | c;
             } else {
                 c = (REG_A & ~0xffff0000) | (c << 16);
@@ -1300,9 +1308,9 @@ void am29000_emulate(void)
             REG_C = (uint32_t) (shift >> 32);
             break;
         case 0x7c:  /* EXHW */
-            /* !!! Hard-coded big-endian */
             c = REG_B & 0xffff0000;
-            if (READ_BP & 2) {
+            d = READ_BP ^ endianness;
+            if ((d & 2) == 0) {
                 d = REG_A;
             } else {
                 d = REG_A >> 16;
@@ -1310,9 +1318,9 @@ void am29000_emulate(void)
             REG_C = c | (d & 0xffff);
             break;
         case 0x7d:  /* EXHW imm */
-            /* !!! Hard-coded big-endian */
             c = IMM & 0xffff0000;
-            if (READ_BP & 2) {
+            d = READ_BP ^ endianness;
+            if ((d & 2) == 0) {
                 d = REG_A;
             } else {
                 d = REG_A >> 16;
@@ -1320,8 +1328,8 @@ void am29000_emulate(void)
             REG_C = c | (d & 0xffff);
             break;
         case 0x7e:  /* EXHWS */
-            /* !!! Hard-coded big-endian */
-            if (READ_BP & 2) {
+            d = READ_BP ^ endianness;
+            if ((d & 2) == 0) {
                 d = REG_A;
             } else {
                 d = REG_A >> 16;
@@ -1539,6 +1547,13 @@ void am29000_emulate(void)
                 WRITE_FC(REG_B);
             } else {
                 special[c] = REG_B;
+                if (c == 3) {
+                    if ((special[c] & 4) == 0) {    /* BO = 0 */
+                        endianness = 3; /* Big-endian */
+                    } else {    /* BO = 1 */
+                        endianness = 0; /* Little-endian */
+                    }
+                }
             }
             if (c == 0) {   /* VAB */
                 static int first_time = 1;

@@ -653,6 +653,8 @@ void do_something(void)
                 }
                 pc1 = 0xbfff0000;
                 pc0 = pc1 + 4;
+                endianness = 3; /* Shouldn't be done here */
+                special[3] = 0x00000000u;
 
                 write_word(0xbfffffd8, 0x00000200); /* 512 kilobytes of RAM */
                 write_word(0xbfffffdc, 0x40); /* Boot drive (0x40 for A, 0-7 for C-I) */

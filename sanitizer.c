@@ -58,7 +58,7 @@ void optimize_directory(int block, char *path)
             continue;
         }
         strcpy(path, (char *) p);
-        if (p1 != p)
+        if (p1 != p)    /* Displace old directory entry backward */
             memcpy(p1, p, 64);
         p1 += 64;
         block = (p[0x38] << 24) | (p[0x39] << 16) | (p[0x3a] << 8) | p[0x3b];
@@ -97,7 +97,7 @@ void optimize_directory(int block, char *path)
     }
     
     /*
-     ** Erase the remaining of the sector.
+     ** Erase the remaining of the block.
      */
     while (p1 < p2) {
         memset(p1, 0, 64);

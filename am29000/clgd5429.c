@@ -31,7 +31,9 @@ extern void debug_info(void);
  ** http://www.s100computers.com/My%20System%20Pages/VGA_16_Board%20(Cirrus)/GD542x%20Technical%20Reference%20Manual.pdf
  **
  ** Hardware cursor described in page 528.
-*/
+ **
+ ** Notice there is no support for the BIOS ROM as it isn't used.
+ */
 
 struct cl_gd5429 vga;
 
@@ -295,13 +297,38 @@ int clgd5429_mem_write_byte(int address, int byte)
     }
     /* Supposes Write Mode 4. vga.gr[0x0b] & 4 opens vga.gr[0x05] & 7 */
     if ((vga.gr[0x0b] & 0x04) != 0 && (vga.gr[0x05] & 7) == 4) {    /* Write mode 4 */
-        byte &= vga.sr[2];
-        for (c = 0x80; c; c >>= 1) {    /* Expand bitmap to 16-bit pixels */
-            if (byte & c) {
-                vga.ram[address + 0] = vga.gr[0x01];
-                vga.ram[address + 1] = vga.gr[0x11];
-            }
-            address += 2;
+        byte &= vga.sr[2];  /* Mask, and now expand bitmap to 16-bit pixels */
+        if (byte & 0x80) {
+            vga.ram[address + 0] = vga.gr[0x01];
+            vga.ram[address + 1] = vga.gr[0x11];
+        }
+        if (byte & 0x40) {
+            vga.ram[address + 2] = vga.gr[0x01];
+            vga.ram[address + 3] = vga.gr[0x11];
+        }
+        if (byte & 0x20) {
+            vga.ram[address + 4] = vga.gr[0x01];
+            vga.ram[address + 5] = vga.gr[0x11];
+        }
+        if (byte & 0x10) {
+            vga.ram[address + 6] = vga.gr[0x01];
+            vga.ram[address + 7] = vga.gr[0x11];
+        }
+        if (byte & 0x08) {
+            vga.ram[address + 8] = vga.gr[0x01];
+            vga.ram[address + 9] = vga.gr[0x11];
+        }
+        if (byte & 0x04) {
+            vga.ram[address + 10] = vga.gr[0x01];
+            vga.ram[address + 11] = vga.gr[0x11];
+        }
+        if (byte & 0x02) {
+            vga.ram[address + 12] = vga.gr[0x01];
+            vga.ram[address + 13] = vga.gr[0x11];
+        }
+        if (byte & 0x01) {
+            vga.ram[address + 14] = vga.gr[0x01];
+            vga.ram[address + 15] = vga.gr[0x11];
         }
     } else {
         fprintf(stderr, "CL-GD5429: Unhandled write mode 0x%02x\n", vga.gr[0x0b]);

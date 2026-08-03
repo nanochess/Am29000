@@ -55,7 +55,7 @@ int clgd5429_io_write_byte(int port, int byte)
                 vga.ar[vga.attribute_register & 0x1f] = byte;   /* Data */
             vga.attribute_switch ^= 1;
             break;
-        case 0x3c2:
+        case 0x3c2: /* Miscellaneous output register */
             vga.mstatus = byte;
             break;
         case 0x3c4: /* Sequencer register */
@@ -63,8 +63,8 @@ int clgd5429_io_write_byte(int port, int byte)
             break;
         case 0x3c5: /* Sequencer data */
             /*
-             ** The cursor coordinates use the top 3 bits of the register number
-             ** as bits 2-0 of coordinate.
+             ** The hardware cursor coordinates use the top 3 bits of the
+             ** register number as bits 2-0 of coordinate.
              */
             if ((vga.sequencer_register & 0x1f) == 0x10) {
                 vga.cursor_x = (byte << 3) | (vga.sequencer_register >> 5);
@@ -217,7 +217,7 @@ int clgd5429_io_write_byte(int port, int byte)
         case 0x3d5: /* CRTC data */
             vga.cr[vga.crtc_register & 0x3f] = byte;
             break;
-        case 0x3da:
+        case 0x3da: /* Feature register */
             vga.feature = byte;
             break;
         default:
@@ -228,6 +228,7 @@ int clgd5429_io_write_byte(int port, int byte)
 
 /*
  ** Write a 16-bit word to the I/O ports.
+ ** It simply separates it in two bytes.
  */
 int clgd5429_io_write_word(int port, int word)
 {
@@ -245,31 +246,31 @@ int clgd5429_io_write_word(int port, int word)
 int clgd5429_io_read_byte(int port)
 {
     switch (port) {
-        case 0x3c1:
+        case 0x3c1: /* Attribute registers */
             vga.attribute_switch ^= 1;
             return vga.ar[vga.attribute_register & 0x1f];
-        case 0x3c2:
+        case 0x3c2: /* Miscellaneous output register */
             return vga.mstatus;
-        case 0x3c4:
+        case 0x3c4: /* Sequencer register number */
             return vga.sequencer_register;
-        case 0x3c5:
+        case 0x3c5: /* Sequencer register data */
             return vga.sr[vga.sequencer_register & 0x1f];
-        case 0x3c6:
+        case 0x3c6: /* DAC mask */
             if (vga.dac_read == 4) {
                 vga.dac_read = 0;
                 return vga.hidden_dac;
             }
             vga.dac_read = vga.dac_read + 1;
             return vga.dac_mask;
-        case 0x3ce:
+        case 0x3ce: /* Graphics register number */
             return vga.graphics_register;
-        case 0x3cf:
+        case 0x3cf: /* Graphics register data */
             return vga.gr[vga.graphics_register & 0x3f];
-        case 0x3d4:
+        case 0x3d4: /* CRTC register number */
             return vga.crtc_register;
-        case 0x3d5:
+        case 0x3d5: /* CRTC register data */
             return vga.cr[vga.crtc_register & 0x3f];
-        case 0x3da:
+        case 0x3da: /* Feature register */
             return vga.cstatus;
         default:
             return -1;
@@ -283,7 +284,7 @@ int clgd5429_mem_write_byte(int address, int byte)
 {
     int c;
     
-    if (address < 0x000a0000 || address > 0x000bffff) {
+    if (address < 0x000a0000 || address > 0x000bffff) { /* A:0000 - B:FFFF */
         return -1;
     }
     address -= 0x000a0000;
@@ -295,7 +296,7 @@ int clgd5429_mem_write_byte(int address, int byte)
     /* Supposes Write Mode 4. vga.gr[0x0b] & 4 opens vga.gr[0x05] & 7 */
     if ((vga.gr[0x0b] & 0x04) != 0 && (vga.gr[0x05] & 7) == 4) {    /* Write mode 4 */
         byte &= vga.sr[2];
-        for (c = 0x80; c; c >>= 1) {
+        for (c = 0x80; c; c >>= 1) {    /* Expand bitmap to 16-bit pixels */
             if (byte & c) {
                 vga.ram[address + 0] = vga.gr[0x01];
                 vga.ram[address + 1] = vga.gr[0x11];
@@ -400,6 +401,7 @@ void clgd5429_restore_cursor(void)
 
 /*
  ** Draw the cursor
+ ** Currently only 32x32 pixels supported.
  */
 void clgd5429_draw_cursor(void)
 {
@@ -411,7 +413,7 @@ void clgd5429_draw_cursor(void)
     int color_1;
     int color_2;
     
-    if ((vga.sr[0x12] & 1) == 0)
+    if ((vga.sr[0x12] & 1) == 0)    /* Hardware cursor enabled? */
         return;
     color_1 = ((vga.palette[0] & 0x3e) << 10) | ((vga.palette[1] & 0x3f) << 5) | ((vga.palette[2] & 0x3e) >> 1);
     color_2 = ((vga.palette[765] & 0x3e) << 10) | ((vga.palette[766] & 0x3f) << 5) | ((vga.palette[767] & 0x3e) >> 1);

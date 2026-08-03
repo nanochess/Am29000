@@ -164,6 +164,13 @@ void trap(int number)
     }
 }
 
+/*
+ ** Special registers of the AMD Am29k processors.
+ **
+ ** The original Am29000 manual doesn't have official abbreviated names
+ ** for the special registers. These names come from the Am29050
+ ** manual.
+ */
 char *special_regs[] = {
     "VAB", "OPS", "CPS", "CFG", "CHA", "CHD", "CHC", "RBP",
     "TMC", "TMR", "PC0", "PC1", "PC2", "MMU", "LRU", "RSN",
@@ -247,46 +254,46 @@ void disassemble(uint32_t pc, uint32_t instruction, char *p)
      ** this is suggested by the AMD manuals.
      */
     if ((instruction >> 24) == 0x70) {  /* ASEQ */
-        if (((instruction >> 8) & 0xff) == (instruction & 0xff)) {
+        if (((instruction >> 8) & 0xff) == (instruction & 0xff)) {  /* Both registers are the same */
             strcpy(p, "NOP");
             return;
         }
     }
-    q = mnemonic[instruction >> 24];
+    q = mnemonic[instruction >> 24];    /* Get decoding information */
     while (*q) {
         if (*q == '%') {
             q++;
             switch (*q++) {
-                case 'c':
+                case 'c':   /* Reg. C */
                     reg = (instruction >> 16) & 0xff;
                     p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
                     break;
-                case 'a':
+                case 'a':   /* Reg. A */
                     reg = (instruction >> 8) & 0xff;
                     p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
                     break;
-                case 'b':
+                case 'b':   /* Reg. B */
                     reg = (instruction & 0xff);
                     p += sprintf(p, "%cr%d", (reg < 128 ? 'g' : 'l'), reg & 127);
                     break;
-                case 'l':
+                case 'l':   /* LOAD/STORE memory control */
                     p += sprintf(p, "%d,0x%02x", (instruction >> 23) & 1, (instruction >> 16) & 0x7f);
                     break;
-                case 'i':
+                case 'i':   /* 8-bit immediate */
                     p += sprintf(p, "0x%02x", instruction & 0xff);
                     break;
-                case 's':
+                case 's':   /* Special register */
                     strcpy(p, special_regs[(instruction >> 8) & 0xff]);
                     while (*p)
                         p++;
                     break;
-                case 'v':
+                case 'v':   /* Instruction code (emulator internal) */
                     p += sprintf(p, "0x%02x", (instruction >> 8) & 0xff);
                     break;
-                case 't':
+                case 't':   /* Trap 8-bit immediate */
                     p += sprintf(p, "0x%02x", (instruction >> 16) & 0xff);
                     break;
-                case 'm':
+                case 'm':   /* 16-bit immediate */
                     p += sprintf(p, "0x%04x", (instruction & 0xff) | ((instruction >> 8) & 0xff00));
                     break;
                 case 'r':   /* Relative address */
@@ -300,7 +307,7 @@ void disassemble(uint32_t pc, uint32_t instruction, char *p)
                     addr = ((instruction & 0xff) | ((instruction >> 8) & 0xff00)) << 2;
                     p += sprintf(p, "0x%08x", addr);
                     break;
-                case 'f':   /* Convert */
+                case 'f':   /* CONVERT */
                     p += sprintf(p, "%x,%x,%x,%x", (instruction >> 7) & 1, (instruction >> 4) & 7, (instruction >> 2) & 3, instruction & 3);
                     break;
             }
@@ -333,12 +340,12 @@ void am29000_emulate(void)
      }*/
     /* Timer */
     if ((special[8] & 0xffffff) == 0) { /* Timer reload */
-        special[8] = special[9] & 0xffffff;
-        if (special[9] & 0x02000000)
+        special[8] = special[9] & 0xffffff; /* Copy value */
+        if (special[9] & 0x02000000)    /* Interrupt already happened? */
             special[9] |= 0x04000000;   /* Overflow */
         special[9] |= 0x02000000;   /* Interrupt */
     } else {
-        special[8] = (special[8] - 1);
+        special[8] = special[8] - 1;    /* Count down */
     }
     if ((special[9] & 0x03000000) == 0x03000000) {  /* Interrupt + IE */
         if ((special[2] & 0x0401) == 0) { /* DA = 0 */
@@ -349,7 +356,7 @@ void am29000_emulate(void)
         }
     }
     
-    instruction = read_word(pc1);
+    instruction = read_word(pc1);   /* Read the next instruction to execute */
     
     if ((special[2] & 0x0400) == 0) {
         special[10] = pc0;
@@ -376,7 +383,7 @@ void am29000_emulate(void)
     pc2 = pc1;
     pc1 = pc0;
     pc0 = pc1 + 4;
-    switch (instruction >> 24) {
+    switch (instruction >> 24) {    /* Decode instruction */
         case 0x01:  /* CONSTN */
             REG_A = 0xffff0000 | IMM16;
             break;

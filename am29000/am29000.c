@@ -403,9 +403,9 @@ void am29000_emulate(void)
                 special[c] = IMM16;
                 if (c == 3) {
                     if ((special[c] & 4) == 0) {    /* BO = 0 */
-                        endianness = 0; /* Big-endian */
+                        endianness = 3; /* Big-endian */
                     } else {    /* BO = 1 */
-                        endianness = 3; /* Little-endian */
+                        endianness = 0; /* Little-endian */
                     }
                 }
             }

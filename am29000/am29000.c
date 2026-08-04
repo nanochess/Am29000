@@ -17,57 +17,69 @@
 #include "clgd5429.h"
 
 /*
- ** Not implemented:
- ** * LOADL 0x06 0x07
- ** * LOADSET 0x26 0x27
- ** * MFTLB 0xb6
- ** * MTTLB 0xbe
- ** * STOREL 0x0e 0x0f
+ ** Am29000 manual from https://archive.org/details/bitsavers_amdAm29000ual_16568459
+ ** Am29050 manual from https://archive.org/details/bitsavers_amdAm29000nual_30055159
+ **   (for some reason not found if you search for am29050)
  **
- ** Not implemented in processor:
- ** o MMU handling (TLB).
- ** o Arithmetic traps (ADDS, ADDU, SUBS, SUBU)
- ** o Channel registers.
- ** o Interruptable LOADM/STOREM.
- ** o Interruption pins (required if the 16550 serial chip is emulated).
+ ** The original Am29000 manual has several deviations over its successor Am29050,
+ ** in particular the floating-point instructions opcodes change, and the added
+ ** multiplication instructions.
+ **
+ ** Section numbers cited are from the Am29000 manual.
  */
 
 /*
-** Am29000 manual from https://archive.org/details/bitsavers_amdAm29000ual_16568459
-** Am29050 manual from https://archive.org/details/bitsavers_amdAm29000nual_30055159
-**   (for some reason not found if you search for am29050)
-**
-** The original Am29000 manual has several deviations over its successor Am29050,
-** in particular the floating-point instructions opcodes change, and the added
-** multiplication instructions.
-*/
+ ** Not implemented instructions:
+ ** o LOADL 0x06 0x07
+ ** o LOADSET 0x26 0x27
+ ** o MFTLB 0xb6
+ ** o MTTLB 0xbe
+ ** o STOREL 0x0e 0x0f
+ ** o Arithmetic traps (ADDS, ADDU, SUBS, SUBU)
+ **
+ ** Not implemented in processor:
+ ** o Vector Base Address, not implemented access per address (VF bit 4 of CFG)
+ ** o Interruption pins (required if the 16550 serial chip is emulated), and the
+ **   corresponding IP bit 14 and bits 3-1 in CPS register.
+ ** o Single step trace (bits 13 and 12 of CPS register)
+ ** o Unaligned trap handling (Trap-Unaligned bit set in bit 11 of CPS register)
+ ** o WAIT mode (WM bit set in bit 7 of CPS)
+ ** o Supervisor mode (bit 4 of CPS)
+ ** o MMU handling (TLB registers, MMU and LRU registers, and bit 6 and 5 of CPS)
+ ** o Channel registers.
+ ** o Interruptable LOADM/STOREM (and registers CHA, CHD, and CHC)
+ ** o Register protection (RBP register)
+ */
 
 /*
-** Page 62:
-** Vector Area Base Address (register 0)
-** Old Processor Status (register 1)
-** Current Processor Status (register 2)
-** Configuration (register 3)
-** Channel Address (register 4)
-** Channel Data (register 5)
-** Channel Control (register 6)
-** Register Bank Protect (register 7)
-** Timer Counter (register 8)
-** Timer Reload (register 9)
-** Program Counter 0 (register 10 decode) (next instruction to be executed)
-** Program Counter 1 (register 11 execute) (current instruction)
-** Program Counter 2 (register 12 write-back) (previous instruction)
-** MMU Configuration (register 13)
-** LRU Recommendation (register 14)
-** Indirect Pointer C (register 128)
-** Indirect Pointer A (register 129)
-** Indirect Pointer B (register 130)
-** Q (register 131)
-** ALU Status (register 132)
-** Byte Pointer (register 133)
-** Funnel Shift Count (register 134)
-** Load/Store Count Remaining (register 135)
-*/
+ ** I should have defined macros for accesing these registers,
+ ** here is a handy reference for access to special[] array.
+ **
+ ** Page 62:
+ ** Vector Area Base Address (register 0)
+ ** Old Processor Status (register 1)
+ ** Current Processor Status (register 2)
+ ** Configuration (register 3)
+ ** Channel Address (register 4)
+ ** Channel Data (register 5)
+ ** Channel Control (register 6)
+ ** Register Bank Protect (register 7)
+ ** Timer Counter (register 8)
+ ** Timer Reload (register 9)
+ ** Program Counter 0 (register 10 decode) (next instruction to be executed)
+ ** Program Counter 1 (register 11 execute) (current instruction)
+ ** Program Counter 2 (register 12 write-back) (previous instruction)
+ ** MMU Configuration (register 13)
+ ** LRU Recommendation (register 14)
+ ** Indirect Pointer C (register 128)
+ ** Indirect Pointer A (register 129)
+ ** Indirect Pointer B (register 130)
+ ** Q (register 131)
+ ** ALU Status (register 132)
+ ** Byte Pointer (register 133)
+ ** Funnel Shift Count (register 134)
+ ** Load/Store Count Remaining (register 135)
+ */
 
 uint32_t rom[32768];
 uint32_t memory[524288 / 4];

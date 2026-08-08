@@ -720,8 +720,12 @@ void am29000_emulate(void)
             }
             break;
         case 0x2f:    /* CPBYTE imm */
-            ALU(REG_A, IMM, 0);
-            REG_C = REG_A + IMM;
+            c = REG_A ^ IMM;
+            if ((c & 0xff) == 0 || (c & 0xff00) == 0 || (c & 0xff0000) == 0 || (c & 0xff000000) == 0) {
+                REG_C = AM29K_TRUE;
+            } else {
+                REG_C = AM29K_FALSE;
+            }
             break;
         case 0x30:    /* SUBRS */
             ALU(-REG_A, REG_B, 0);
@@ -1422,33 +1426,33 @@ void am29000_emulate(void)
             ALU_SIMPLE(c);
             break;
         case 0x96:    /* XNOR */
-            c = REG_A ^ REG_B;
-            REG_C = ~c;
+            c = ~(REG_A ^ REG_B);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x97:    /* XNOR imm */
-            c = REG_A ^ IMM;
-            REG_C = ~c;
+            c = ~(REG_A ^ IMM);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x98:    /* NOR */
-            c = REG_A | REG_B;
-            REG_C = ~c;
+            c = ~(REG_A | REG_B);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x99:    /* NOR imm */
-            c = REG_A | IMM;
-            REG_C = ~c;
+            c = ~(REG_A | IMM);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x9a:    /* NAND */
-            c = REG_A & REG_B;
-            REG_C = ~c;
+            c = ~(REG_A & REG_B);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x9b:    /* NAND imm */
-            c = REG_A & IMM;
-            REG_C = ~c;
+            c = ~(REG_A & IMM);
+            REG_C = c;
             ALU_SIMPLE(c);
             break;
         case 0x9c:    /* ANDN */

@@ -323,8 +323,7 @@ void floppy_scsi(uint32_t unit, uint32_t subunit, uint32_t command, uint32_t com
             }
             sector = (read_byte(command + 4) << 8) | read_byte(command + 5);
             total = (read_byte(command + 7) << 8) | read_byte(command + 8);
-            if (debug != NULL)
-                fprintf(debug, "Reading sector %d, length %d (addr=0x%08x)\n", sector, total, data);
+            fprintf(stderr, "Reading sector %d, length %d (addr=0x%08x)\n", sector, total, data);
             for (count = 0; count < total; count++) {
                 fseek((unit == 0xfffffffeu ? floppy : floppy2), sector * 512, SEEK_SET);
                 fread(sector_data, 1, 512, (unit == 0xfffffffeu ? floppy : floppy2));
@@ -345,13 +344,7 @@ void floppy_scsi(uint32_t unit, uint32_t subunit, uint32_t command, uint32_t com
             }
             sector = (read_byte(command + 4) << 8) | read_byte(command + 5);
             total = (read_byte(command + 7) << 8) | read_byte(command + 8);
-            if (debug != NULL) {
-                fprintf(debug, "Writing sector %d, length %d (addr=0x%08x)\n", sector, total, data);
-/*                if (data == 0x80051418) {
-                    debug_info();
-                    exit(1);
-                }*/
-            }
+            fprintf(stderr, "Writing sector %d, length %d (addr=0x%08x)\n", sector, total, data);
             for (count = 0; count < total; count++) {
                 for (c = 0; c < 512; c++) {
                     sector_data[c] = read_byte(data);

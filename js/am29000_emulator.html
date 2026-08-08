@@ -1,0 +1,184 @@
+<html>
+    <head>
+        <title>Am29000 emulator by nanochess (2026)</title>
+    </head>
+    <body>
+        <div id="terminal"><canvas id="canvas" width="800" height="600" style="cursor:none;"></canvas> </div>
+        <script>
+            // Aug/06/2026. First working version.
+            
+            //
+            // Add a key to buffer
+            //
+            function add_keyboard(code)
+            {
+                var start;
+                var end;
+                var writer;
+                
+                start = read_word(0xbffffa00);
+                end = read_word(0xbffffa04);
+                writer = read_word(0xbffffa08);
+                write_word(writer, code);
+                writer += 4;
+                if (writer == end)
+                    writer = start;
+                write_word(0xbffffa08, writer);
+                
+                // Patch keyboard code
+                write_word(0x8002be28, 0x16048789);   // LOAD 0,0x04,lr7,lr9
+                write_word(0x8002be50, 0xa0000074);   // Jump to 8002c020
+                write_word(0x8002be54, 0x03008c00);   // Shift keys status is zero
+            }
+
+            document.getElementById("canvas").addEventListener("mousemove", function(e) {
+                var x, y;
+                
+                x = e.offsetX;
+                y = e.offsetY;
+                x -= 16;
+                y -= 16;
+                if (x < 0)
+                    x = 0;
+                if (y < 0)
+                    y = 0;
+                if (x > 800 - 32)
+                    x = 800 - 32;
+                if (y > 600 - 32)
+                    y = 600 - 32
+                regs[92] = x;
+                regs[91] = y;
+                e.preventDefault();
+            }, false);
+            document.getElementById("canvas").addEventListener("mousedown", function(e) {
+                if (e.button == 0)
+                    regs[90] |= 0x04;
+                else if (e.button == 1)
+                    regs[90] |= 0x02;
+                else if (e.button == 2)
+                    regs[90] |= 0x01;
+                e.preventDefault();
+            }, false);
+            document.getElementById("canvas").addEventListener("mouseup", function(e) {
+                if (e.button == 0)
+                    regs[90] &= ~0x04;
+                else if (e.button == 1)
+                    regs[90] &= ~0x02;
+                else if (e.button == 2)
+                    regs[90] &= ~0x01;
+                e.preventDefault();
+            }, false);
+                    document.addEventListener("keydown", function(e) {
+                        var key = e.key;
+                        
+                        switch (key) {
+                            case "ArrowLeft":
+                                add_keyboard(0x14);
+                                break;
+                            case "ArrowRight":
+                                add_keyboard(0x16);
+                                break;
+                            case "ArrowUp":
+                                add_keyboard(0x18);
+                                break;
+                            case "ArrowDown":
+                                add_keyboard(0x12);
+                                break;
+                            case "PageUp":
+                                add_keyboard(0x19);
+                                break;
+                            case "PageDown":
+                                add_keyboard(0x13);
+                                break;
+                            case "Home":
+                                add_keyboard(0x17);
+                                break;
+                            case "End":    // End
+                                add_keyboard(0x11);
+                                break;
+                            case "Insert":    // Ins
+                                add_keyboard(0x10);
+                                break;
+                            case "Del":
+                            case "Delete":    // Del
+                                add_keyboard(0x0e);
+                                break;
+                            case "Esc":
+                            case "Escape":
+                                add_keyboard(0x1b);
+                                break;
+                            case 101:   // Numpad 5
+                                add_keyboard(0x15);
+                                break;
+                            case "F1":   // F1
+                                add_keyboard(0x01);
+                                break;
+                            case "F2":   // F2
+                                add_keyboard(0x02);
+                                break;
+                            case "F3":   // F3
+                                add_keyboard(0x03);
+                                break;
+                            case "F4":   // F4
+                                add_keyboard(0x04);
+                                break;
+                            case "F5":   // F5
+                                add_keyboard(0x05);
+                                break;
+                            case "F6":   // F6
+                                add_keyboard(0x06);
+                                break;
+                            case "F7":   // F7
+                                add_keyboard(0x07);
+                                break;
+                            case "F8":   // F8
+                                add_keyboard(0x08);
+                                break;
+                            case "F9":   // F9
+                                add_keyboard(0x09);
+                                break;
+                            case "F10":   // F10
+                                add_keyboard(0x0a);
+                                break;
+                            case "F11":   // F11
+                                add_keyboard(0x0b);
+                                break;
+                            case "F12":   // F12
+                                add_keyboard(0x0c);
+                                break;
+                            case "Backspace":
+                                add_keyboard(0x08);
+                                break;
+                            case "Spacebar":
+                                add_keyboard(0x20);
+                                break;
+                            case "Tab":
+                                add_keyboard(0x09);
+                                break;
+                            case "Enter":
+                                add_keyboard(0x0d);
+                                break;
+                            default:
+                                if (key.length == 1) {
+                                    add_keyboard(e.key.charCodeAt(0));
+                                }
+                                break;
+                        }
+                        e.preventDefault();
+
+                    }, false);
+            </script>
+        
+        <script src="disk.js"></script>
+        <script src="empty_disk.js"></script>
+        <script src="clgd5429.js"></script>
+        <script src="am29000_emulator.js"></script>
+        <script>
+            clgd5429 = new clgd5429(document.getElementById("canvas"));
+            processor = new am29000();
+            interval = window.setInterval("try { processor.start_emulation(); clgd5429.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+        </script>
+    </body>
+</html>
+
+

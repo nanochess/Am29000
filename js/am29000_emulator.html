@@ -50,6 +50,12 @@
                 regs[91] = y;
                 e.preventDefault();
             }, false);
+            document.getElementById("canvas").addEventListener("touchstart", function(e) {
+                regs[90] |= 0x04;
+            }, false);
+            document.getElementById("canvas").addEventListener("touchend", function(e) {
+                regs[90] &= ~0x04;
+            }, false);
             document.getElementById("canvas").addEventListener("mousedown", function(e) {
                 if (e.button == 0)
                     regs[90] |= 0x04;

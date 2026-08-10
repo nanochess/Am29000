@@ -40,7 +40,7 @@ That's it, you can play moving the windows, clicking the buttons to access the p
 * CDROM: This enables a ISO-9660 file system, but there's no CD support in the emulator.
 * Circuito impreso: A demo of vectorial graphics.
 * Colores: A way to edit the operating system colors.
-* Depurador: A bare bones debugger where you can view dumps of memory or disassembled code.
+* Depurador: A bare bones debugger where you can view dumps of memory or disassembled code. You can click on a line and enter Am29000 assembler mnemonics, don't forget to press Enter to input it.
 * Editor: A text editor that can print documents (very glitchy)
 * Promedio: Processor usage and free memory.
 * Terminal: A serial terminal, but there's no serial port support.

@@ -1,0 +1,958 @@
+;
+; Rutinas matemáticas de libreria para el Compilador de C G11.
+;
+; por Oscar Toledo Gutiérrez.
+;
+; (c) Copyright Oscar Toledo G.1995-1998.
+;
+; Creación: 24-nov-1995.
+; Revisión: 15-mar-1996. Soporte para argc y argv.
+; Revisión: 06-jul-1998. Traslado al codigo nativo de G11.
+;
+
+.align
+.global _abs
+_abs:
+add gr97,lr3,0
+sll gr96,lr2,1
+jmpi lr0
+srl gr96,lr2,1
+
+.global _round
+_round:
+jmpi lr0
+convert gr96,lr2,0,0,0,2
+
+.global _trunc
+_trunc:
+jmpi lr0
+convert gr96,lr2,0,3,0,2
+
+.global _sqrt
+_sqrt:
+jmpi lr0
+sqrt gr96,lr2,2
+
+.global _sqr
+_sqr:
+jmpi lr0
+dmul gr96,lr2,lr2
+
+; FA=sin(FA)
+;
+.global _sin
+_sin:
+CONVERT gr96,lr2,0,0,1,2
+CONST gr98,CONSTLIB
+CONSTH gr98,CONSTLIB
+sin2:
+ADD gr99,gr98,24
+LOAD 0,4,gr99,gr99
+FMUL gr99,gr96,gr99
+ADD gr100,gr98,28
+LOAD 0,4,gr102,gr100
+FADD gr100,gr99,gr102
+CONST gr101,16777216
+CONSTH gr101,16777216
+SUB gr100,gr100,gr101
+CONVERT gr100,gr100,0,1,0,1
+CONVERT gr100,gr100,0,0,1,0
+ADD gr100,gr100,gr101
+FSUB gr99,gr99,gr100
+FGT gr100,gr99,gr102
+JMPF gr100,sin1
+ADD gr100,gr98,32
+LOAD 0,4,gr100,gr100
+FSUB gr99,gr100,gr99
+sin1:
+FMUL gr96,gr99,gr99
+SRL gr101,gr101,1
+ADD gr96,gr96,gr101
+FSUB gr96,gr96,gr102
+ADD gr100,gr98,20
+LOAD 0,4,gr100,gr100
+FMUL gr100,gr96,gr100
+ADD gr101,gr98,16
+LOAD 0,4,gr101,gr101
+FADD gr100,gr100,gr101
+FMUL gr100,gr100,gr96
+ADD gr101,gr98,12
+LOAD 0,4,gr101,gr101
+FADD gr100,gr100,gr101
+FMUL gr100,gr100,gr96
+ADD gr101,gr98,8
+LOAD 0,4,gr101,gr101
+FADD gr100,gr100,gr101
+FMUL gr100,gr100,gr96
+ADD gr101,gr98,4
+LOAD 0,4,gr101,gr101
+FADD gr100,gr100,gr101
+FMUL gr100,gr100,gr96
+LOAD 0,4,gr101,gr98
+FADD gr100,gr100,gr101
+FMUL gr96,gr100,gr99
+JMPI lr0
+CONVERT gr96,gr96,0,0,2,1
+
+; FA=cos(FA)
+;
+; Usa la rutina de SIN
+; para sacar el COS.
+;
+; FA=sin(FA+(pi/2))
+;
+.global _cos
+_cos:
+CONVERT gr96,lr2,0,0,1,2
+CONST gr98,CONSTLIB
+CONSTH gr98,CONSTLIB
+ADD gr97,gr98,36
+LOAD 0,4,gr97,gr97
+JMP sin2
+FADD gr96,gr96,gr97
+
+; Saca el arco tangente
+;
+; FA = arctan(FA)
+;
+.global _arctan
+_arctan:
+const gr98,CONSTLIB
+consth gr98,CONSTLIB
+convert gr96,lr2,0,0,1,2
+cpneq gr99,gr99,gr99
+fgt gr97,gr99,gr96
+const gr100,2147483647
+consth gr100,2147483647
+and gr96,gr96,gr100
+add gr100,gr98,96
+load 0,4,gr100,gr100
+fgt gr101,gr96,gr100
+jmpf gr101,arctan1
+nop
+cpeq gr99,gr99,gr99
+fdiv gr96,gr100,gr96
+arctan1:
+fmul gr100,gr96,gr96
+add gr101,gr98,40
+load 0,4,gr101,gr101
+fmul gr101,gr100,gr101
+add gr102,gr98,44
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,48
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,52
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,56
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,60
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,64
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,68
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,72
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,76
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,80
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,84
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr101,gr101,gr100
+add gr102,gr98,88
+load 0,4,gr102,gr102
+fadd gr101,gr101,gr102
+fmul gr96,gr101,gr96
+jmpf gr99,arctan2
+add gr102,gr98,92
+load 0,4,gr102,gr102
+sub gr96,gr102,gr96
+arctan2:
+xor gr96,gr96,gr97
+jmpi lr0
+convert gr96,gr96,0,0,2,1
+
+; Saca el logaritmo natural.
+;
+; FA=ln(FA)
+;
+.global _ln
+_ln:
+convert gr96,lr2,0,0,1,2
+jmpf gr96,ln1
+nop
+const gr96,0
+jmpi lr0
+const gr97,0
+ln1:
+const gr98,CONSTLIB
+consth gr98,CONSTLIB
+; Extrae la caracteristica
+srl gr97,gr96,23
+and gr97,gr97,255
+sub gr97,gr97,126
+const gr99,-2139095041
+consth gr99,-2139095041
+and gr96,gr96,gr99
+const gr99,1056964608
+consth gr99,1056964608
+or gr96,gr96,gr99
+add gr101,gr98,100
+load 0,4,gr101,gr101
+fsub gr100,gr96,gr101
+fadd gr101,gr96,gr101
+fdiv gr96,gr100,gr101
+fmul gr99,gr96,gr96
+add gr101,gr98,108
+load 0,4,gr101,gr101
+fmul gr100,gr101,gr99
+add gr101,gr98,112
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr99
+add gr101,gr98,116
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr99
+add gr101,gr98,120
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr99
+add gr101,gr98,124
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr99
+add gr101,gr98,128
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,132
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+convert gr97,gr97,0,0,1,0
+fadd gr96,gr100,gr97
+add gr101,gr98,136
+load 0,4,gr101,gr101
+fmul gr96,gr96,gr101
+jmpi lr0
+convert gr96,gr96,0,0,2,1
+
+; Exponente.
+;
+; FA=exp(FA)
+;
+.global _exp
+_exp:
+const gr98,CONSTLIB
+consth gr98,CONSTLIB
+convert gr96,lr2,0,0,1,2
+add gr97,gr98,140
+load 0,4,gr97,gr97
+fmul gr96,gr96,gr97
+convert gr97,gr96,0,3,0,1
+convert gr99,gr97,0,0,1,0
+fsub gr96,gr96,gr99
+add gr101,gr98,144
+load 0,4,gr101,gr101
+fmul gr100,gr96,gr101
+add gr101,gr98,148
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,152
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,156
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,160
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,164
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,168
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,172
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,176
+load 0,4,gr101,gr101
+fadd gr100,gr100,gr101
+fmul gr100,gr100,gr96
+add gr101,gr98,180
+load 0,4,gr101,gr101
+fadd gr96,gr100,gr101
+srl gr98,gr96,23
+and gr98,gr98,255
+add gr98,gr98,gr97
+sll gr98,gr98,23
+; Pone la característica de nuevo
+const gr99,-2139095041
+consth gr99,-2139095041
+and gr96,gr96,gr99
+or gr96,gr96,gr98
+jmpi lr0
+convert gr96,gr96,0,0,2,1
+
+.global _randomize
+_randomize:
+mfsr gr96,tmc
+const gr97,1056964608
+consth gr97,1056964608
+or gr96,gr96,gr97
+const gr97,RANDOMIZE
+consth gr97,RANDOMIZE
+jmpi lr0
+store 0,4,gr96,gr97
+
+.global _random
+_random:
+const gr96,1117972424
+consth gr96,1117972424
+const gr97,RANDOMIZE
+consth gr97,RANDOMIZE
+load 0,4,gr97,gr97
+fmul gr96,gr96,gr97
+convert gr97,gr96,0,3,0,1
+convert gr97,gr97,0,0,1,0
+fsub gr96,gr96,gr97
+const gr97,RANDOMIZE
+consth gr97,RANDOMIZE
+store 0,4,gr96,gr97
+jmpi lr0
+convert gr96,gr96,0,0,2,1
+
+.align
+RANDOMIZE:
+.byte 0,0,128,63
+
+CONSTLIB:
+TABLASIN:
+.byte 94,50,162,63
+.byte 26,216,145,190
+.byte 218,79,149,60
+.byte 239,47,15,186
+.byte 251,10,31,55
+.byte 98,78,230,179
+.byte 140,249,34,63
+.byte 0,0,128,63
+.byte 0,0,0,64
+
+TABLACOS:
+.byte 207,15,201,63
+
+ARCTAN3:
+.byte 186,254,226,57
+.byte 206,216,86,187
+.byte 125,209,62,60
+.byte 35,196,215,188
+.byte 10,23,52,61
+.byte 163,129,119,189
+.byte 97,174,153,61
+.byte 143,96,185,189
+.byte 18,114,227,61
+.byte 251,79,18,190
+.byte 191,204,76,62
+.byte 170,170,170,190
+.byte 255,255,127,63
+.byte 218,15,201,63
+.byte 0,0,128,63
+
+LN3:
+.byte 243,4,53,63
+.byte 0,0,128,64
+.byte 172,195,145,62
+.byte 158,183,163,62
+.byte 166,13,211,62
+.byte 96,187,19,63
+.byte 78,56,118,63
+.byte 59,170,56,64
+.byte 0,0,0,191
+.byte 23,114,49,63
+
+EXP3:
+.byte 59,170,184,63
+.byte 69,86,21,52
+.byte 160,146,167,53
+.byte 238,147,128,55
+.byte 167,120,33,57
+.byte 130,196,174,58
+.byte 88,149,29,60
+.byte 70,88,99,61
+.byte 239,253,117,62
+.byte 23,114,49,63
+.byte 0,0,128,63
+
+;
+; Libreria estándar para el compilador de C G11.
+;
+; por Oscar Toledo Gutiérrez
+;
+; (c) Copyright Oscar Toledo G.1998
+;
+
+_strncpy:
+cpeq gr96,lr4,0
+jmpti gr96,lr0
+load 0,20,gr96,lr3
+exbyte gr96,gr96,0
+cpeq gr97,gr96,0
+jmpt gr97,__m10
+add lr3,lr3,1
+load 0,20,gr97,lr2
+inbyte gr97,gr97,gr96
+store 0,4,gr97,lr2
+sub lr4,lr4,1
+jmp _strncpy
+add lr2,lr2,1
+__m10:
+cpeq gr96,lr4,0
+jmpti gr96,lr0
+sub lr4,lr4,1
+load 0,20,gr96,lr2
+inbyte gr96,gr96,0
+store 0,4,gr96,lr2
+jmp __m10
+add lr2,lr2,1
+_memcpy:
+sub lr4,lr4,2
+__m8:
+load 0,20,gr96,lr3
+exbyte gr96,gr96,0
+load 0,20,gr97,lr2
+inbyte gr97,gr97,gr96
+store 0,20,gr97,lr2
+add lr2,lr2,1
+jmpfdec lr4,__m8
+add lr3,lr3,1
+jmpi lr0
+nop
+
+_memset:
+sub lr4,lr4,2
+__m7:
+load 0,20,gr96,lr2
+inbyte gr96,gr96,lr3
+store 0,4,gr96,lr2
+jmpfdec lr4,__m7
+add lr2,lr2,1
+jmpi lr0
+nop
+
+_fwrite:
+const gr121,14
+asneq 72,gr1,gr1
+
+_fread:
+const gr121,13
+asneq 72,gr1,gr1
+
+_fseek:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,44
+add lr2,lr8,0
+add lr3,lr10,0
+add lr5,lr9,0
+sra lr4,lr5,31
+call lr0,__m3
+const gr121,15
+add gr1,gr1,24
+nop
+jmpi lr0
+asleu 65,lr1,gr127
+
+_ftell:
+sub gr1,gr1,16
+asgeu 64,gr1,gr126
+add lr1,gr1,28
+sub gr125,gr125,8
+add lr2,lr6,0
+add lr3,gr125,0
+call lr0,__m3
+const gr121,12
+add gr96,gr125,4
+load 0,4,gr96,gr96
+add gr1,gr1,16
+add gr125,gr125,8
+jmpi lr0
+asleu 65,lr1,gr127
+
+_muestra_aviso:
+const gr121,2
+asneq 75,gr1,gr1
+
+_inicia_tarea:
+sub gr1,gr1,64
+asgeu 64,gr1,gr126
+add lr1,gr1,80
+const gr96,1024
+sub gr125,gr125,gr96
+add gr96,lr18,1
+load 0,20,gr96,gr96
+exbyte gr96,gr96,0
+cpeq gr97,gr96,58
+add gr96,lr18,0
+jmpt gr97,__it3
+add gr97,gr125,0
+const gr96,__tarea
+consth gr96,__tarea
+call lr0,_info_tarea
+load 0,4,lr2,gr96
+add gr97,gr125,0
+__it1:
+load 0,20,gr98,gr96
+exhw gr98,gr98,0
+cpeq gr99,gr98,0
+jmpt gr99,__it2
+cpeq gr99,gr98,1
+jmpt gr99,__it2
+add gr96,gr96,2
+load 0,20,gr99,gr97
+inhw gr99,gr99,gr98
+store 0,4,gr99,gr97
+jmp __it1
+add gr97,gr97,2
+__it2:
+sub gr97,gr97,2
+load 0,20,gr99,gr97
+exhw gr99,gr99,0
+cpeq gr100,gr99,47
+jmpf gr100,__it2
+nop
+add gr97,gr97,2
+add gr96,lr18,0
+__it3:
+load 0,20,gr98,gr96
+exbyte gr98,gr98,0
+cpeq gr99,gr98,0
+jmpt gr99,__it4
+add gr96,gr96,1
+load 0,20,gr99,gr97
+inhw gr99,gr99,gr98
+store 0,4,gr99,gr97
+jmp __it3
+add gr97,gr97,2
+__it4:
+load 0,20,gr99,gr97
+inhw gr99,gr99,0
+store 0,4,gr99,gr97
+add lr15,gr97,0
+add lr2,gr125,0
+call lr0,__m3
+const gr121,19
+cpeq gr97,gr96,0
+jmpt gr97,__it7
+add lr14,gr96,0
+add gr97,lr15,0
+cpeq gr98,lr19,0
+jmpt gr98,__it6
+load 0,20,gr99,gr97
+inhw gr99,gr99,1
+store 0,4,gr99,gr97
+add gr97,gr97,2
+add gr96,lr19,0
+__it5:
+load 0,20,gr98,gr96
+exbyte gr98,gr98,0
+cpeq gr99,gr98,0
+jmpt gr99,__it6
+add gr96,gr96,1
+load 0,20,gr99,gr97
+inhw gr99,gr99,gr98
+store 0,4,gr99,gr97
+jmp __it5
+add gr97,gr97,2
+__it6:
+load 0,20,gr99,gr97
+inhw gr99,gr99,0
+store 0,4,gr99,gr97
+add gr96,lr14,16
+load 0,4,lr2,gr96
+call lr0,_malloc
+add lr6,lr2,0
+cpeq gr97,gr96,0
+jmpf gr97,__it8
+nop
+__it10:
+call lr0,_free
+add lr2,lr14,0
+jmp __it7
+nop
+__it8:
+add lr4,gr96,0
+add gr96,lr14,20
+load 0,4,lr2,gr96
+call lr0,_malloc
+add lr7,lr2,0
+cpeq gr97,gr96,0
+jmpf gr97,__it9
+nop
+call lr0,_free
+add lr2,lr4,0
+jmp __it10
+nop
+__it9:
+add lr5,gr96,0
+add lr3,lr14,0
+add lr2,gr125,0
+call lr0,__sv
+const gr121,26
+__it7:
+const gr96,1024
+add gr1,gr1,64
+add gr125,gr125,gr96
+jmpi lr0
+asleu 65,lr1,gr127
+
+_termina_tarea:
+const gr121,1
+asneq 66,gr1,gr1
+
+_info_tarea:
+const gr121,3
+asneq 66,gr1,gr1
+
+_envia_mensaje:
+const gr121,23
+asneq 66,gr1,gr1
+
+_mensaje_urgente:
+const gr121,24
+asneq 66,gr1,gr1
+
+_lee_sistema:
+const gr121,27
+asneq 66,gr1,gr1
+
+_crea_clase:
+const gr121,32
+asneq 66,gr1,gr1
+
+_ventana_estandar:
+const gr121,40
+asneq 66,gr1,gr1
+
+_aviso_error:
+const gr121,0
+asneq 75,gr1,gr1
+
+_sel_color:
+const gr121,10
+asneq 66,gr1,gr1
+
+_sel_tipo:
+const gr121,11
+asneq 66,gr1,gr1
+
+_rellena:
+const gr121,12
+asneq 66,gr1,gr1
+
+_ilustra_texto:
+const gr121,20
+asneq 66,gr1,gr1
+
+_multitarea:
+const gr121,4
+asneq 66,gr1,gr1
+
+_fclose:
+const gr121,11
+__m3:
+asneq 72,gr1,gr1
+
+_malloc:
+const gr121,2
+asneq 69,gr1,gr1
+
+_free:
+const gr121,3
+asneq 69,gr1,gr1
+
+__m9:
+const gr96,512
+sub gr125,gr125,gr96
+add gr96,lr8,0
+add gr97,gr125,0
+__m1:
+load 0,20,gr98,gr96
+exbyte gr98,gr98,0
+load 0,20,gr99,gr97
+inhw gr99,gr99,gr98
+store 0,4,gr99,gr97
+add gr96,gr96,1
+cpeq gr98,gr98,0
+jmpf gr98,__m1
+add gr97,gr97,2
+jmpi lr0
+nop
+
+_remove:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+call lr0,__m9
+nop
+add lr2,gr125,0
+call lr0,__m3
+const gr121,6
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_fopen:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+call lr0,__m9
+nop
+add lr2,gr125,0
+add gr96,lr9,0
+const lr3,0
+__fo1:
+load 0,20,gr97,gr96
+exbyte gr97,gr97,0
+cpeq gr98,gr97,0
+jmpt gr98,__m2
+add gr96,gr96,1
+cpeq gr98,gr97,43
+jmpf gr98,__fo2
+jmpt gr98,__fo1
+or lr3,lr3,4
+__fo2:
+cplt gr98,gr97,48
+jmpt gr98,__fo3
+cpgt gr98,gr97,57
+jmpt gr98,__fo3
+nop
+sub gr97,gr97,48
+sll gr97,gr97,8
+jmp __fo1
+or lr3,lr3,gr97
+__fo3:
+cpeq gr98,gr97,119
+jmpf gr98,__fo1
+jmpt gr98,__fo1
+const lr3,1
+__m2:
+call lr0,__m3
+const gr121,8
+sra gr97,gr96,31
+nand gr97,gr97,gr97
+and gr96,gr96,gr97
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_abre_dir:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,36
+call lr0,__m9
+nop
+add lr2,gr125,0
+call lr0,__m3
+const gr121,9
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_atributo:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+call lr0,__m9
+nop
+add lr2,gr125,0
+add lr3,lr9,0
+call lr0,__m3
+const gr121,3
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_crea_dir:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,36
+call lr0,__m9
+nop
+add lr2,gr125,0
+call lr0,__m3
+const gr121,4
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_fgetc:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+sub gr125,gr125,4
+add lr2,lr8,0
+add lr3,gr125,0
+const lr4,1
+call lr0,__m3
+const gr121,13
+cpeq gr97,gr96,0
+jmpt gr97,__m4
+const gr96,-1
+load 0,20,gr96,gr125
+exbyte gr96,gr96,0
+__m4:
+add gr1,gr1,24
+add gr125,gr125,4
+jmpi lr0
+asleu 65,lr1,gr127
+
+_fputc:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+sub gr125,gr125,4
+load 0,20,gr96,gr125
+inbyte gr96,gr96,lr8
+store 0,4,gr96,gr125
+add lr2,lr9,0
+add lr3,gr125,0
+const lr4,1
+call lr0,__m3
+const gr121,14
+cpeq gr97,gr96,0
+jmpt gr97,__m5
+const gr96,-1
+add gr96,lr8,0
+__m5:
+add gr1,gr1,24
+add gr125,gr125,4
+jmpi lr0
+asleu 65,lr1,gr127
+
+;
+; typedef struct jmp_buf_str {
+;   int *gr1;
+;   int *msp;
+;   int *lr0;
+;   int *lr1;
+; } *jmp_buf;
+;
+_setjmp:
+store 0,4,gr1,lr2
+add lr2,lr2,4
+store 0,4,gr125,lr2
+add lr2,lr2,4
+store 0,4,lr0,lr2
+add lr2,lr2,4
+store 0,4,lr1,lr2
+jmpi lr0
+const gr96,0
+
+_longjmp:
+load 0,4,gr121,lr2
+add gr97,lr2,4
+cpeq gr96,lr3,0
+srl gr96,gr96,31
+or gr96,lr3,gr96
+add gr1,gr121,0
+add gr121,gr121,8
+load 0,4,gr125,gr97
+cpgtu gr99,gr121,gr127
+jmpf gr99,__m6
+add gr97,gr97,4
+add gr98,gr97,4
+load 0,4,lr1,gr98
+sub gr99,gr127,gr126
+sub gr126,gr121,gr99
+add gr127,gr121,0
+__m6:
+load 0,4,lr0,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+SALIDA:
+.space 16
+
+.global __tarea
+__tarea:
+.word 0
+
+__sv:
+asneq 66,gr1,gr1
+nop
+
+__main:
+sub gr1,gr1,16
+asgeu 64,gr1,gr126
+add lr1,gr1,24
+const lr2,0
+call lr0,__sv
+const gr121,27
+const gr97,__tarea
+consth gr97,__tarea
+store 0,4,gr96,gr97
+const lr2,SALIDA
+call lr0,_setjmp
+consth lr2,SALIDA
+add gr1,gr1,16
+nop
+jmpi lr0
+asleu 65,lr1,gr127
+
+__exit:
+sub gr1,gr1,16
+asgeu 64,gr1,gr126
+add lr1,gr1,24
+const gr96,__tarea
+consth gr96,__tarea
+call lr0,_termina_tarea
+load 0,4,lr2,gr96
+halt
+nop
+
+_exit:
+const lr2,SALIDA
+consth lr2,SALIDA
+jmp _longjmp
+const lr3,0
+

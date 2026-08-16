@@ -1,0 +1,19 @@
+;
+; Ejemplo para probar el ensamblador
+;
+
+.word INDEFINIDO
+
+jmp INDEFINIDO
+nop
+
+const gr64,INDEFINIDO
+consth gr64,INDEFINIDO
+
+nop
+
+INDEFINIDO:
+jmpi lr0
+nop
+
+

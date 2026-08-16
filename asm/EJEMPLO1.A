@@ -1,0 +1,11 @@
+;
+; Ejemplo para probar el ensamblador
+;
+
+jmp SOPAS
+nop
+nop
+nop
+
+SOPAS:
+

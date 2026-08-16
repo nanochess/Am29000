@@ -1,0 +1,181 @@
+_fclose:
+const gr121,11
+__m3:
+asneq 72,gr1,gr1
+nop
+
+_malloc:
+const gr121,2
+asneq 69,gr1,gr1
+nop
+
+_free:
+const gr121,3
+asneq 69,gr1,gr1
+nop
+
+_fopen:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+const gr96,512
+sub gr125,gr125,gr96
+add gr96,lr8,0
+add gr97,gr125,0
+__m1:
+load 0,20,gr98,gr96
+exbyte gr98,gr98,0
+load 0,20,gr99,gr97
+inhw gr99,gr99,gr98
+store 0,4,gr99,gr97
+add gr96,gr96,1
+cpeq gr98,gr98,0
+jmpf gr98,__m1
+add gr97,gr97,2
+load 0,20,gr96,lr9
+exbyte gr96,gr96,0
+cpeq gr97,gr96,119
+jmpt gr97,__m2
+const lr3,1
+const lr3,0
+__m2:
+add lr2,gr125,0
+call lr0,__m3
+const gr121,8
+const gr97,512
+add gr1,gr1,24
+add gr125,gr125,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+_fgetc:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+sub gr125,gr125,4
+add lr2,lr8,0
+add lr3,gr125,0
+const lr4,1
+call lr0,__m3
+const gr121,13
+cpeq gr97,gr96,0
+jmpt gr97,__m4
+const gr96,-1
+load 0,20,gr96,gr125
+exbyte gr96,gr96,0
+__m4:
+add gr1,gr1,24
+add gr125,gr125,4
+jmpi lr0
+asleu 65,lr1,gr127
+
+_fputc:
+sub gr1,gr1,24
+asgeu 64,gr1,gr126
+add lr1,gr1,40
+sub gr125,gr125,4
+load 0,20,gr96,gr125
+inbyte gr96,gr96,lr8
+store 0,4,gr96,gr125
+add lr2,lr9,0
+add lr3,gr125,0
+const lr4,1
+call lr0,__m3
+const gr121,14
+cpeq gr97,gr96,0
+jmpt gr97,__m5
+const gr96,-1
+add gr96,lr8,0
+__m5:
+add gr1,gr1,24
+add gr125,gr125,4
+jmpi lr0
+asleu 65,lr1,gr127
+
+;
+; typedef struct jmp_buf_str {
+;   int *gr1;
+;   int *msp;
+;   int *lr0;
+;   int *lr1;
+; } *jmp_buf;
+;
+_setjmp:
+store 0,4,gr1,lr2
+add lr2,lr2,4
+store 0,4,gr125,lr2
+add lr2,lr2,4
+store 0,4,lr0,lr2
+add lr2,lr2,4
+store 0,4,lr1,lr2
+jmpi lr0
+const gr96,0
+
+_longjmp:
+load 0,4,gr121,lr2
+add gr97,lr2,4
+cpeq gr96,lr3,0
+srl gr96,gr96,31
+or gr96,lr3,gr96
+add gr1,gr121,0
+add gr121,gr121,8
+load 0,4,gr125,gr97
+cpgtu gr99,gr121,gr127
+jmpf gr99,__m6
+add gr97,gr97,4
+add gr98,gr97,4
+load 0,4,lr1,gr98
+sub gr99,gr127,gr126
+sub gr126,gr121,gr99
+add gr127,gr121,0
+__m6:
+load 0,4,lr0,gr97
+jmpi lr0
+asleu 65,lr1,gr127
+
+SALIDA:
+.space 16
+
+NUM_TAREA:
+.word 0
+
+__sv:
+asneq 66,gr1,gr1
+nop
+
+__main:
+sub gr1,gr1,16
+asgeu 64,gr1,gr126
+add lr1,gr1,24
+const lr2,0
+call lr0,__sv
+const gr121,27
+const gr97,NUM_TAREA
+consth gr97,NUM_TAREA
+store 0,4,gr96,gr97
+const lr2,SALIDA
+call lr0,_setjmp
+consth lr2,SALIDA
+add gr1,gr1,16
+nop
+jmpi lr0
+asleu 65,lr1,gr127
+
+__exit:
+sub gr1,gr1,16
+asgeu 64,gr1,gr126
+add lr1,gr1,24
+const gr96,NUM_TAREA
+consth gr96,NUM_TAREA
+load 0,4,lr2,gr96
+call lr0,__sv
+const gr121,1
+halt
+nop
+
+_exit:
+const lr2,SALIDA
+consth lr2,SALIDA
+jmp _longjmp
+const lr3,0
+

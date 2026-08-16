@@ -1,5 +1,5 @@
 /*
- ** CL-GD549 emulation
+ ** CL-GD5429 emulation (ISA)
  **
  ** by Oscar Toledo G.
  ** https://nanochess.org/
@@ -22,7 +22,7 @@ extern void debug_info(void);
 /*
  ** This is a simple emulation of the Cirrus Logic GD5429, only the
  ** required functions for a 800x600x64k display with some
- ** acceleration functions and harwdware cursor.
+ ** acceleration functions and hardware cursor.
  **
  ** Given the slowness of the ISA bus, these features gave
  ** amazing speed for graphical operating systems.
@@ -284,8 +284,6 @@ int clgd5429_io_read_byte(int port)
  */
 int clgd5429_mem_write_byte(int address, int byte)
 {
-    int c;
-    
     if (address < 0x000a0000 || address > 0x000bffff) { /* A:0000 - B:FFFF */
         return -1;
     }
@@ -384,7 +382,7 @@ int clgd5429_mem_read_word(int address)
     debug_info();
     exit(1);
     return 0;
-};
+}
 
 /*
  ** Save the background under the cursor.

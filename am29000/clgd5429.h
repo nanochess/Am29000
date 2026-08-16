@@ -1,5 +1,5 @@
 /*
- ** CL-GD549 emulation
+ ** CL-GD5429 emulation
  **
  ** by Oscar Toledo G.
  **

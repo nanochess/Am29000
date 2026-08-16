@@ -6,6 +6,12 @@
  ** (c) Copyright 1996-2026 Oscar Toledo G.
  **
  ** Creation date: Jul/28/2026.
+ ** Revision date: Aug/10/2026. Added support for G11V2 floppy disks. Now
+ **                             it can create hard drive images. Allows to
+ **                             change attribute for different files.
+ **                             Converts UTF-8.
+ ** Revision date: Aug/15/2026. Preserves original dates when creating the
+ **                             structure.
  */
 
 #include <stdio.h>
@@ -13,10 +19,32 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#ifdef __APPLE__
+#include <sys/stat.h>
+#endif
 
 #define SECTOR_SIZE     512
 
-unsigned char boot_block[SECTOR_SIZE * 8] = {
+/*
+ ** G11a filesystem format (pretty similar to my transputer filesystem)
+ **
+ ** Word    Description
+ ** ----    ------------
+ **   0     Anything (a jump if the disk is bootable)
+ **   1     0x70406161 Signature NOP instruction.
+ **   2     0x47313161 Signature "G11a"
+ **   3     Serial number
+ **   4     Size of sectors (almost always 512 bytes)
+ **   5     Total number of sectors in media.
+ **   6     Number of sectors in a block.
+ **   7     Total number of blocks in media.
+ **   8     Block of root directory.
+ **   9     Initial block of File Allocation Table (FAT)
+ **  10     Size in blocks of File Allocation Table (FAT)
+ **  11     Size in bytes of each entry in the FAT (1, 2, or 4)
+ */
+
+unsigned char boot_block_v1[SECTOR_SIZE * 8] = {
     0xa0, 0x00, 0x00, 0x20, 0x70, 0x40, 0x61, 0x61, 0x47, 0x31, 0x31, 0x61, 0x36, 0xf2, 0x74, 0x00,
     0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x40, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01, 0x68,
     0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02,
@@ -87,53 +115,120 @@ unsigned char boot_block[SECTOR_SIZE * 8] = {
     0x03, 0x00, 0x60, 0x00, 0x02, 0x80, 0x60, 0x00, 0xc0, 0x00, 0x00, 0x60, 0x70, 0x40, 0x01, 0x01,
 };
 
+unsigned char boot_block_v2[SECTOR_SIZE * 8] = {
+    0x20, 0x00, 0x00, 0xa0, 0x61, 0x61, 0x40, 0x70, 0x61, 0x31, 0x31, 0x47, 0x45, 0x1c, 0xef, 0xa4,
+    0x00, 0x02, 0x00, 0x00, 0x40, 0x0b, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00,
+    0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+    0x46, 0xe9, 0x6e, 0x69, 0x78, 0x2c, 0x20, 0x70, 0x72, 0x65, 0x70, 0x61, 0x72, 0x61, 0x64, 0x6f,
+    0x72, 0x20, 0x64, 0x65, 0x20, 0x64, 0x69, 0x73, 0x63, 0x6f, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xb0, 0x40, 0x00, 0x03, 0xc0, 0x41, 0x00, 0x03, 0x28, 0x42, 0x01, 0x03, 0x68, 0x43, 0x00, 0x03,
+    0x80, 0x44, 0x01, 0x03, 0xff, 0x44, 0xbf, 0x02, 0x52, 0x80, 0x00, 0xa8, 0x0a, 0x60, 0x00, 0x03,
+    0xc0, 0x40, 0x00, 0x03, 0xe8, 0x41, 0x00, 0x03, 0x00, 0x42, 0x02, 0x03, 0xff, 0x42, 0xbf, 0x02,
+    0x4c, 0x80, 0x00, 0xa8, 0x0b, 0x60, 0x00, 0x03, 0xe8, 0x40, 0x00, 0x03, 0xfc, 0x41, 0x00, 0x03,
+    0xa0, 0x42, 0x01, 0x03, 0xff, 0x42, 0xbf, 0x02, 0x00, 0x43, 0x00, 0x03, 0x45, 0x80, 0x00, 0xa8,
+    0x0f, 0x60, 0x00, 0x03, 0xe8, 0x40, 0x00, 0x03, 0x10, 0x41, 0x01, 0x03, 0xc0, 0x42, 0x01, 0x03,
+    0xff, 0x42, 0xbf, 0x02, 0x01, 0x43, 0x00, 0x03, 0x3e, 0x80, 0x00, 0xa8, 0x0f, 0x60, 0x00, 0x03,
+    0x00, 0x60, 0x00, 0x03, 0x04, 0x60, 0x00, 0x02, 0x60, 0x00, 0x00, 0xc0, 0x01, 0x01, 0x40, 0x70,
+    0x45, 0x73, 0x70, 0x61, 0x63, 0x69, 0x6f, 0x20, 0x70, 0x61, 0x72, 0x61, 0x20, 0x61, 0x72, 0x72,
+    0x61, 0x6e, 0x63, 0x61, 0x64, 0x6f, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x41, 0x72, 0x72, 0x61, 0x6e, 0x63, 0x61, 0x6e, 0x64, 0x6f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x53, 0x69, 0x73, 0x74, 0x65, 0x6d, 0x61, 0x20, 0x46, 0xe9, 0x6e, 0x69, 0x78, 0x20, 0x76, 0x31,
+    0x2e, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xa9, 0x20, 0x43, 0x6f, 0x70, 0x79, 0x72, 0x69, 0x67, 0x68, 0x74, 0x20, 0x31, 0x39, 0x39, 0x39,
+    0x20, 0x4f, 0x73, 0x63, 0x61, 0x72, 0x20, 0x54, 0x6f, 0x6c, 0x65, 0x64, 0x6f, 0x20, 0x47, 0x00,
+    0xec, 0x61, 0xff, 0x03, 0xff, 0x61, 0xbf, 0x02, 0x61, 0x61, 0x04, 0x16, 0x03, 0x60, 0x60, 0x81,
+    0x61, 0x60, 0x60, 0x14, 0x60, 0x00, 0x00, 0xc0, 0x01, 0x01, 0x40, 0x70, 0x78, 0x56, 0x34, 0x12,
+    0x99, 0x9f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x88, 0x79, 0x99,
+    0x99, 0x99, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf8, 0x87, 0x99, 0x99,
+    0x99, 0x99, 0x9f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x88, 0x79, 0x99, 0x99,
+    0x79, 0x99, 0x99, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf8, 0x87, 0x99, 0x99, 0x97,
+    0x87, 0x99, 0x99, 0x9f, 0x7f, 0x7f, 0x7f, 0x71, 0x3f, 0x7f, 0x7f, 0x88, 0x79, 0x99, 0x99, 0x7f,
+    0x88, 0x79, 0x99, 0x99, 0xf7, 0xf7, 0x88, 0x11, 0x33, 0xf7, 0xf8, 0x87, 0x99, 0x99, 0x97, 0xf7,
+    0x78, 0x87, 0x99, 0x99, 0x9f, 0x78, 0x81, 0x19, 0x93, 0x3f, 0x88, 0x79, 0x99, 0x99, 0x7f, 0x7f,
+    0xf7, 0x88, 0x79, 0x99, 0x99, 0x88, 0x11, 0x99, 0x99, 0x33, 0x87, 0x99, 0x99, 0x97, 0xf7, 0xf7,
+    0x7f, 0x78, 0x87, 0x99, 0x91, 0x11, 0x19, 0x99, 0x99, 0x93, 0x39, 0x99, 0x99, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf7, 0x88, 0x79, 0x11, 0x11, 0x99, 0x99, 0x99, 0x99, 0x33, 0x99, 0x97, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x7f, 0x78, 0x88, 0x11, 0x19, 0x99, 0x99, 0x99, 0x99, 0x93, 0x39, 0x7f, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf7, 0xf7, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0xf7, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x7f, 0x78, 0x81, 0x19, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x93, 0x3f, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf7, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x78, 0x81, 0x19, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x93, 0x3f, 0x7f, 0x7f,
+    0xf7, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0xf7, 0xf7,
+    0x7f, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0x7f, 0x7f,
+    0xf7, 0xf8, 0x81, 0x19, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x93, 0x37, 0xf7, 0xf7,
+    0x7f, 0x7f, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf7, 0xf8, 0x81, 0x19, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x93, 0x37, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x7f, 0x7f, 0x88, 0x11, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x33, 0x7f, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf7, 0xf8, 0x88, 0x11, 0x19, 0x99, 0x99, 0x99, 0x99, 0x93, 0x39, 0xf7, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x7f, 0x88, 0x79, 0x11, 0x11, 0x99, 0x99, 0x99, 0x99, 0x33, 0x99, 0x9f, 0x7f, 0x7f, 0x7f,
+    0xf7, 0xf8, 0x87, 0x99, 0x91, 0x11, 0x19, 0x99, 0x99, 0x93, 0x39, 0x99, 0x99, 0xf7, 0xf7, 0xf7,
+    0x7f, 0x88, 0x79, 0x99, 0x99, 0x88, 0x11, 0x99, 0x99, 0x33, 0x87, 0x99, 0x99, 0x9f, 0x7f, 0x7f,
+    0xf8, 0x87, 0x99, 0x99, 0x97, 0xf8, 0x81, 0x19, 0x93, 0x37, 0x88, 0x79, 0x99, 0x99, 0xf7, 0xf7,
+    0x88, 0x79, 0x99, 0x99, 0x7f, 0x7f, 0x88, 0x11, 0x33, 0x7f, 0x78, 0x87, 0x99, 0x99, 0x9f, 0x7f,
+    0x87, 0x99, 0x99, 0x97, 0xf7, 0xf7, 0xf8, 0x81, 0x37, 0xf7, 0xf7, 0x88, 0x79, 0x99, 0x99, 0xf7,
+    0x79, 0x99, 0x99, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x78, 0x87, 0x99, 0x99, 0x9f,
+    0x99, 0x99, 0x97, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0x88, 0x79, 0x99, 0x99,
+    0x99, 0x99, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x78, 0x87, 0x99, 0x99,
+    0x99, 0x97, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0xf7, 0x88, 0x79, 0x99,
+};
+
+int attribute;
+int version;
+int harddisk;
+
 unsigned char *image;
 int total_sectors;
-int max_blocks;
+int total_blocks;
 int block_size;
 int directory_sector;
 int directory_block;
+int next_block;
+
+unsigned char *fat;
+int blocks;
 
 char label[32];
+
+int next_arg;
+int indent;
+
+void create_directory(int, int, char *[]);
 
 /*
  ** Main program
  */
 int main(int argc, char *argv[])
 {
-    FILE *input;
     FILE *output;
     int c;
-    unsigned char entry[64];
-    char *p;
-    char *p1;
-    unsigned char *p2;
-    unsigned char *next_entry;
-    unsigned char *entry_limit;
-    int next_block;
     int block;
-    unsigned int length;
-    int blocks;
-    unsigned char *fat;
-    time_t current_time;
-    struct tm *time_data;
-    int temp;
     int arg;
     int media;
-    int version;
     unsigned int size;
-    int attribute;
+    char *p;
+    unsigned char *p2;
     
-    fprintf(stderr, "\nbuildboot v0.1. Am29000 computer image creator\n");
+    fprintf(stderr, "\nbuildboot v0.2. Am29000 computer disk image creator\n");
     fprintf(stderr, "by Oscar Toledo G. https://nanochess.org/\n\n");
-    time(&current_time);
-    time_data = localtime(&current_time);
     if (argc < 3) {
         fprintf(stderr, "Usage: buildboot [options] disk.img [...files...]\n\n");
         fprintf(stderr, "disk.img is the final disk image (1.44 mb)\n");
         fprintf(stderr, "[...files...] are files to be added:\n");
         fprintf(stderr, "\n");
-        fprintf(stderr, "-l name   Label name for the disk\n");
+        fprintf(stderr, "-v1       Build for G11V1 (high-endian byte order)\n");
+        fprintf(stderr, "-v2       Build for G11V2 (little-endian byte order)\n");
+        fprintf(stderr, "-l name   Label name for the disk.\n");
+        fprintf(stderr, "-hd       Create a 40 mb. hard disk image.\n");
         fprintf(stderr, "-a1       Attribute 1 for files (executable)\n");
         fprintf(stderr, "-a5       Attribute 5 for files (font)\n");
         fprintf(stderr, "-a8       Attribute 8 for files (driver)\n");
@@ -141,13 +236,20 @@ int main(int argc, char *argv[])
         fprintf(stderr, "\n");
         exit(1);
     }
-    
+    version = 0;
     attribute = 0;
+    harddisk = 0;
     media = 0;
     arg = 1;
     while (arg < argc && argv[arg][0] == '-') {
-        if (tolower(argv[arg][1]) == 'a') {
+        if (tolower(argv[arg][1]) == 'v') {
+            version = atoi(argv[arg] + 2);
+            arg++;
+        } else if (tolower(argv[arg][1]) == 'a') {
             attribute = atoi(argv[arg] + 2);
+            arg++;
+        } else if (tolower(argv[arg][1]) == 'h' && tolower(argv[arg][2]) == 'd') {
+            harddisk = 1;
             arg++;
         } else if (tolower(argv[arg][1]) == 'l') {
             arg++;
@@ -155,147 +257,116 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Error: missing label for volume\n");
                 exit(1);
             }
-            strncpy(label, argv[arg], sizeof(label) - 1);
+            p = argv[arg];
+            p2 = (unsigned char *) label;
+            while (*p) {
+                if ((*p & 0xe0) == 0xc0 && (p[1] & 0xc0) == 0x80) {
+                    *p2++ = ((*p & 0x1f) << 6) | (p[1] & 0x3f);
+                    p += 2;
+                } else {
+                    *p2++ = *p++;
+                }
+                if (p2 - (unsigned char *) label >= sizeof(label) - 1)
+                    break;
+            }
             arg++;
         } else {
             fprintf(stderr, "Unknown option '%s'\n", argv[c]);
             exit(1);
         }
     }
-    
-    total_sectors = 80 * 2 * 18;
-    block_size = 8;
-    max_blocks = total_sectors / block_size;
-    directory_block = (block_size * SECTOR_SIZE + max_blocks * 2 + (block_size * SECTOR_SIZE - 1)) / (block_size * SECTOR_SIZE);
+    if (version == 0) {
+        fprintf(stderr, "Please select -v1 for G11V1 or -v2 for G11V2\n");
+        exit(1);
+    }
+    if (harddisk == 0) {
+        total_sectors = 80 * 2 * 18;
+        block_size = 8;
+    } else {
+        total_sectors = 40 * (1048576 / SECTOR_SIZE);
+        block_size = 8;
+    }
+    total_blocks = total_sectors / block_size;
+    directory_block = 1 + ((total_blocks * 2 + (block_size * SECTOR_SIZE - 1)) / (block_size * SECTOR_SIZE));
     next_block = directory_block + 1;
-    image = malloc(max_blocks * block_size * SECTOR_SIZE);
+    image = malloc(total_blocks * block_size * SECTOR_SIZE);
     if (image == NULL) {
         fprintf(stderr, "Couldn't allocate memory for imaye file\n");
         exit(1);
     }
     /* My personal filler byte for formatted disks, circa 1989 */
-    memset(image, 0xfc, max_blocks * block_size * SECTOR_SIZE);
+    memset(image, 0xfc, total_blocks * block_size * SECTOR_SIZE);
     
     /*
      ** Create an empty FAT
      **
-     ** The disk is divided into 360 allocation blocks (80 tracks * 2 sides)
+     ** The disk is divided into allocation blocks (80 tracks * 2 sides)
      */
     fat = &image[8 * SECTOR_SIZE + 0];
-    memset(fat, 0, max_blocks * 2);
-
+    memset(fat, 0, total_blocks * 2);
+    
     /*
      ** Put the boot sector (8 sectors)
      */
-    memcpy(image, boot_block, SECTOR_SIZE * 8);
+    if (version == 1) {
+        memcpy(image, boot_block_v1, SECTOR_SIZE * 8);
+        image[20] = total_sectors >> 24;
+        image[21] = total_sectors >> 16;
+        image[22] = total_sectors >> 8;
+        image[23] = total_sectors;
+        image[28] = total_blocks >> 24;
+        image[29] = total_blocks >> 16;
+        image[30] = total_blocks >> 8;
+        image[31] = total_blocks;
+        image[32] = directory_block >> 24;
+        image[33] = directory_block >> 16;
+        image[34] = directory_block >> 8;
+        image[35] = directory_block ;
+        image[40] = (directory_block - 1) >> 24;
+        image[41] = (directory_block - 1) >> 16;
+        image[42] = (directory_block - 1) >> 8;
+        image[43] = (directory_block - 1);
+    } else if (version == 2) {
+        memcpy(image, boot_block_v2, SECTOR_SIZE * 8);
+        image[20] = total_sectors;
+        image[21] = total_sectors >> 8;
+        image[22] = total_sectors >> 16;
+        image[23] = total_sectors >> 24;
+        image[28] = total_blocks;
+        image[29] = total_blocks >> 8;
+        image[30] = total_blocks >> 16;
+        image[31] = total_blocks >> 24;
+        image[32] = directory_block;
+        image[33] = directory_block >> 8;
+        image[34] = directory_block >> 16;
+        image[35] = directory_block >> 24;
+        image[40] = (directory_block - 1);
+        image[41] = (directory_block - 1) >> 8;
+        image[42] = (directory_block - 1) >> 16;
+        image[43] = (directory_block - 1) >> 24;
+    }
     if (label[0] != '\0')
         memcpy(&image[80], &label[0], 31);
     /* Serial number */
-/*    image[12] = rand();
+    image[12] = rand();
     image[13] = rand();
     image[14] = rand();
-    image[15] = rand();*/
-        
+    image[15] = rand();
+    
     for (c = 0; c < directory_block; c++) {
-        fat[c * 2] = 0xff;      /* Mark boot structures */
-        fat[c * 2 + 1] = 0xfe;
+        if (version == 2) {
+            fat[c * 2] = 0xfe;      /* Mark boot structures */
+            fat[c * 2 + 1] = 0xff;
+        } else {
+            fat[c * 2] = 0xff;      /* Mark boot structures */
+            fat[c * 2 + 1] = 0xfe;
+        }
     }
-    fat[c * 2] = 0xff;      /* Mark directory */
-    fat[c * 2 + 1] = 0xff;
-    next_entry = &image[directory_block * block_size * SECTOR_SIZE];
-    memset(next_entry, 0, block_size * SECTOR_SIZE);
-    entry_limit = next_entry + block_size * SECTOR_SIZE;
     
-    /*
-     ** Add the files
-     */
-    for (c = arg + 1; c < argc; c++) {
-        fprintf(stderr, "Adding %s... ", argv[c]);
-        input = fopen(argv[c], "rb");
-        if (input == NULL) {
-            fprintf(stderr, "\nCouldn't open '%s' file for adding to the floppy disk image\n", argv[c]);
-            exit(1);
-        }
-        fseek(input, 0, SEEK_END);
-        length = (unsigned int) ftell(input);
-        fprintf(stderr, "(length %d)\n", length);
-        blocks = (length + block_size * SECTOR_SIZE - 1) / (block_size * SECTOR_SIZE);
-        if (next_block + blocks > max_blocks) {
-            fprintf(stderr, "The file '%s' doesn't fit inside the floppy disk image\n", argv[c]);
-            fprintf(stderr, "next_block = %d, block_size = %d, blocks = %d, max_blocks = %d\n", next_block, block_size, blocks, max_blocks);
-            exit(1);
-        }
-        fseek(input, 0, SEEK_SET);
-        fread(&image[next_block * block_size * SECTOR_SIZE], 1, length, input);
-        fclose(input);
-        p = argv[c];
-        while (1) {
-            p1 = strchr(p, '/');
-            if (p1 == NULL)
-                break;
-            p = p1 + 1;
-        }
+    indent = 0;
+    next_arg = arg + 1;
+    create_directory(directory_block, argc, argv);
 
-        /*
-         ** Build a directory entry (up to 31 letters per filename)
-         */
-        memset(&entry[0], '\0', 64);
-        p2 = entry;
-        while (*p) {
-            if (p2 < entry + 31)
-                *p2++ = *p;
-            p++;
-        }
-        entry[50] = attribute;
-        temp = (time_data->tm_sec / 2) | (time_data->tm_min << 5) | (time_data->tm_hour << 11);
-        entry[52] = temp;
-        entry[53] = temp >> 8;
-        /* Starting the year in 1970 in honor to UNIX */
-        temp = (time_data->tm_mday) | ((time_data->tm_mon + 1) << 5) | ((time_data->tm_year - 70) << 9);
-        entry[54] = temp;
-        entry[55] = temp >> 8;
-        /* At least I improved choosing a 32-bit block number */
-        entry[56] = next_block >> 24;
-        entry[57] = next_block >> 16;
-        entry[58] = next_block >> 8;
-        entry[59] = next_block;
-        /* And of course, 4 GB files should be enough for everyone XD */
-        entry[60] = length >> 24;
-        entry[61] = length >> 16;
-        entry[62] = length >> 8;
-        entry[63] = length;
-        memcpy(next_entry, entry, 64);
-        next_entry += 64;
-        while (blocks > 1) {
-            fat[next_block * 2] = (next_block + 1) >> 8;
-            fat[next_block * 2 + 1] = (next_block + 1);
-            next_block++;
-            blocks--;
-        }
-        fat[next_block * 2] = 0xff;
-        fat[next_block * 2 + 1] = 0xff;
-        next_block++;
-        if (next_entry == entry_limit) {    /* Expand directory? */
-            if (version == 0) {
-                fprintf(stderr, "Error: Reached limit of directory\n");
-                exit(1);
-            }
-            fat[directory_block * 2] = next_block >> 8;
-            fat[directory_block * 2 + 1] = next_block;
-            directory_block = next_block;
-            fat[directory_block * 2] = 0xff;
-            fat[directory_block * 2 + 1] = 0xff;
-            next_entry = &image[next_block * block_size * SECTOR_SIZE];
-            memset(next_entry, 0, block_size * SECTOR_SIZE);
-            entry_limit = next_entry + block_size * SECTOR_SIZE;
-            if (next_block >= max_blocks) {
-                fprintf(stderr, "Error: Media full when expanding directory\n");
-                exit(1);
-            }
-            next_block++;
-        }
-    }
-    
     /*
      ** Write the final disk image
      */
@@ -304,8 +375,223 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Couldn't open '%s' for output\n", argv[1]);
         exit(1);
     }
-    fwrite(image, 1, max_blocks * block_size * SECTOR_SIZE, output);
+    fwrite(image, 1, total_blocks * block_size * SECTOR_SIZE, output);
     fclose(output);
+    exit(0);
+}
+
+/*
+ ** Create a directory.
+ */
+void create_directory(int directory_block, int argc, char *argv[])
+{
+    int mkdir;
+    FILE *input;
+    unsigned int length;
+    unsigned char entry[64];
+    char *p;
+    char *p1;
+    unsigned char *p2;
+    time_t current_time;
+    struct tm *time_data;
+#ifdef __APPLE__
+    struct stat file_stat;
+#endif
+    unsigned char *next_entry;
+    unsigned char *entry_limit;
+    int temp;
+    int c;
+
+    fat[directory_block * 2] = 0xff;      /* Mark directory */
+    fat[directory_block * 2 + 1] = 0xff;
+    next_entry = &image[directory_block * block_size * SECTOR_SIZE];
+    memset(next_entry, 0, block_size * SECTOR_SIZE);
+    entry_limit = next_entry + block_size * SECTOR_SIZE;
+    
+    /*
+     ** Add the files
+     */
+    while (next_arg < argc) {
+        mkdir = 0;
+        if (argv[next_arg][0] == '-') {
+            if (tolower(argv[next_arg][1]) == 'a') {    /* Attribute for next files */
+                attribute = atoi(argv[next_arg] + 2);
+                next_arg++;
+                continue;
+            } else if (tolower(argv[next_arg][1]) == 'c') {  /* Create directory and go in */
+                next_arg++;
+                if (next_arg < argc) {
+                    mkdir = 1;
+                } else {
+                    fprintf(stderr, "No directory name given\n");
+                    exit(1);
+                }
+            } else if (tolower(argv[next_arg][1]) == 'u') {   /* Go one directory up */
+                indent--;
+                next_arg++;
+                return;
+            } else {
+                fprintf(stderr, "Wrong parameter %s\n2", argv[next_arg]);
+                exit(1);
+            }
+        }
+        for (c = 0; c < indent; c++)
+            fprintf(stderr, "\t");
+        if (mkdir) {
+            time(&current_time);
+            time_data = localtime(&current_time);
+            fprintf(stderr, "Creating directory %s...\n", argv[next_arg]);
+            indent++;
+            length = 0;
+            blocks = 1;
+        } else {
+#ifdef __APPLE__
+            if (stat(argv[next_arg], &file_stat) == -1) {
+                fprintf(stderr, "Error opening metadata for %s\n", argv[next_arg]);
+                exit(1);
+            }
+            time_data = localtime(&file_stat.st_mtime);
+#else
+            time(&current_time);
+            time_data = localtime(&current_time);
+#endif
+            fprintf(stderr, "Adding %s... ", argv[next_arg]);
+            input = fopen(argv[next_arg], "rb");
+            if (input == NULL) {
+                fprintf(stderr, "\nCouldn't open '%s' file for adding to the floppy disk image\n", argv[next_arg]);
+                exit(1);
+            }
+            fseek(input, 0, SEEK_END);
+            length = (unsigned int) ftell(input);
+            blocks = (length + block_size * SECTOR_SIZE - 1) / (block_size * SECTOR_SIZE);
+            fprintf(stderr, "(length %d)\n", length);
+        }
+        if (next_block + blocks > total_blocks) {
+            fprintf(stderr, "It doesn't fit inside the disk image\n");
+            fprintf(stderr, "next_block = %d, block_size = %d, blocks = %d, total_blocks = %d\n", next_block, block_size, blocks, total_blocks);
+            exit(1);
+        }
+        p = argv[next_arg];
+        while (1) {
+            p1 = strchr(p, '/');
+            if (p1 == NULL)
+                break;
+            p = p1 + 1;
+        }
+        next_arg++;
+        
+        /*
+         ** Build a directory entry (up to 31 letters per filename)
+         */
+        memset(&entry[0], '\0', 64);
+        p2 = entry;
+        while (*p) {
+            if (p2 < entry + 31) {
+                if ((*p & 0xe0) == 0xc0 && (p[1] & 0xc0) == 0x80) { /* Convert UTF-8 */
+                    *p2++ = ((*p & 0x1f) << 6) | (p[1] & 0x3f);
+                    p++;
+                } else {
+                    *p2++ = *p;
+                }
+            }
+            p++;
+        }
+        if (version == 1) { /* G11V1 big-endian byte order */
+            if (mkdir) {
+                entry[51] = 0x08;
+                entry[50] = 0x00;
+            } else {
+                entry[51] = 0x00;
+                entry[50] = attribute;
+            }
+            temp = (time_data->tm_sec / 2) | (time_data->tm_min << 5) | (time_data->tm_hour << 11);
+            entry[52] = temp;
+            entry[53] = temp >> 8;
+            /* Starting the year in 1970 in honor to UNIX */
+            temp = (time_data->tm_mday) | ((time_data->tm_mon + 1) << 5) | ((time_data->tm_year - 70) << 9);
+            entry[54] = temp;
+            entry[55] = temp >> 8;
+            /* At least I improved choosing a 32-bit block number */
+            entry[56] = next_block >> 24;
+            entry[57] = next_block >> 16;
+            entry[58] = next_block >> 8;
+            entry[59] = next_block;
+            /* And of course, 4 GB files should be enough for everyone XD */
+            entry[60] = length >> 24;
+            entry[61] = length >> 16;
+            entry[62] = length >> 8;
+            entry[63] = length;
+        } else if (version == 2) {  /* G11V2 little-endian byte order */
+            if (mkdir) {
+                entry[48] = 0x08;
+                entry[49] = 0x00;
+            } else {
+                entry[48] = 0x00;
+                entry[49] = attribute;
+            }
+            temp = (time_data->tm_sec / 2) | (time_data->tm_min << 5) | (time_data->tm_hour << 11);
+            entry[52] = temp;
+            entry[53] = temp >> 8;
+            /* Starting the year in 1970 in honor to UNIX */
+            temp = (time_data->tm_mday) | ((time_data->tm_mon + 1) << 5) | ((time_data->tm_year - 70) << 9);
+            entry[54] = temp;
+            entry[55] = temp >> 8;
+            /* At least I improved choosing a 32-bit block number */
+            entry[56] = next_block;
+            entry[57] = next_block >> 8;
+            entry[58] = next_block >> 16;
+            entry[59] = next_block >> 24;
+            /* And of course, 4 GB files should be enough for everyone XD */
+            entry[60] = length;
+            entry[61] = length >> 8;
+            entry[62] = length >> 16;
+            entry[63] = length >> 24;
+        }
+        memcpy(next_entry, entry, 64);
+        next_entry += 64;
+        if (mkdir) {
+            create_directory(next_block++, argc, argv);
+        } else {
+            fseek(input, 0, SEEK_SET);
+            fread(&image[next_block * block_size * SECTOR_SIZE], 1, length, input);
+            fclose(input);
+            
+            while (blocks > 1) {
+                if (version == 2) {
+                    fat[next_block * 2] = (next_block + 1);
+                    fat[next_block * 2 + 1] = (next_block + 1) >> 8;
+                } else {
+                    fat[next_block * 2] = (next_block + 1) >> 8;
+                    fat[next_block * 2 + 1] = (next_block + 1);
+                }
+                next_block++;
+                blocks--;
+            }
+            fat[next_block * 2] = 0xff;
+            fat[next_block * 2 + 1] = 0xff;
+            next_block++;
+            if (next_entry == entry_limit) {    /* Expand directory? */
+                if (version == 2) {
+                    fat[directory_block * 2] = next_block;
+                    fat[directory_block * 2 + 1] = next_block >> 8;
+                } else {
+                    fat[directory_block * 2] = next_block >> 8;
+                    fat[directory_block * 2 + 1] = next_block;
+                }
+                directory_block = next_block;
+                fat[directory_block * 2] = 0xff;
+                fat[directory_block * 2 + 1] = 0xff;
+                next_entry = &image[next_block * block_size * SECTOR_SIZE];
+                memset(next_entry, 0, block_size * SECTOR_SIZE);
+                entry_limit = next_entry + block_size * SECTOR_SIZE;
+                if (next_block >= total_blocks) {
+                    fprintf(stderr, "Error: Media full when expanding directory\n");
+                    exit(1);
+                }
+                next_block++;
+            }
+        }
+    }
 }
 
 

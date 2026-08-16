@@ -1,14 +1,21 @@
 /*
-** Am29000 processor emulation definitions
-**
-** by Oscar Toledo G.
-** https://nanochess.org/
-**
-** Creation date: Jul/30/2026.
-*/
+ ** Am29000 processor emulation definitions
+ **
+ ** by Oscar Toledo G.
+ ** https://nanochess.org/
+ **
+ ** Creation date: Jul/30/2026.
+ ** Revision date: Aug/12/2026. Added ROM_SIZE, ROM_MASK, RAM_SIZE, and RAM_MASK.
+ */
 
-#define read_word(addr)  ((addr) < 0x80000000 ? rom[((addr) >> 2) & 0x7fff] : memory[((addr) >> 2) & 0x1ffff])
-#define write_word(addr, data)  ((addr) < 0x80000000 ? (rom[((addr) >> 2) & 0x7fff] = (data)) : (memory[((addr) >> 2) & 0x1ffff] = (data)))
+#define ROM_SIZE    1048576
+#define ROM_MASK    (ROM_SIZE - 1)
+
+#define RAM_SIZE    524288
+#define RAM_MASK    (RAM_SIZE - 1)
+
+#define read_word(addr)  ((addr) & 0x80000000 ? memory[((addr) & RAM_MASK) >> 2] : rom[((addr) & ROM_MASK) >> 2])
+#define write_word(addr, data)  ((addr) & 0x80000000 ? (memory[((addr) & RAM_MASK) >> 2] = (data)) : (data))
 
 #define AM29K_TRUE  0x80000000
 #define AM29K_FALSE 0x00000000
@@ -38,29 +45,21 @@
  ** in the BP and FC registers.
  */
 #define READ_BP ((special[132] >> 5) & 3)
-#define WRITE_BP(v) special[132] = (special[132] & ~0x60) | (((v) & 3) << 5)
+#define WRITE_BP(v) if ((special[2] & 0x0400) == 0) special[132] = (special[132] & ~0x60) | (((v) & 3) << 5)
 
 #define READ_FC (special[132] & 0x1f)
-#define WRITE_FC(v) special[132] = (special[132] & ~0x1f) | ((v) & 0x1f)
+#define WRITE_FC(v) if ((special[2] & 0x0400) == 0) special[132] = (special[132] & ~0x1f) | ((v) & 0x1f)
 
 #define ALU_CARRY ((special[132] >> 7) & 1)
 
-#define ALU(v1, v2, c) \
+#define ALU(v1, v2, vc) \
   if ((special[2] & 0x0400) == 0) { \
-    uint64_t tmp = v1 + v2 + c; \
-    if (tmp >> 32) \
+    uint64_t tmp = (uint64_t) v1 + v2 + vc; \
+    special[132] = (special[132] & ~0x0780) | (((uint32_t) tmp & 0x80000000u) >> 22); \
+    if (tmp > 0xfffffffful) \
         special[132] = special[132] | 0x80; \
-    else \
-        special[132] = special[132] & ~0x80; \
-    if (tmp & 0x80000000u) \
-        special[132] = special[132] | 0x0200; \
-    else \
-        special[132] = special[132] & ~0x0200; \
-    if ((tmp & 0xffffffffu) == 0) \
+    if (((uint32_t) tmp) == 0) \
         special[132] = special[132] | 0x0100; \
-    else \
-        special[132] = special[132] & ~0x0100; \
-    special[132] = special[132] & ~0x0400; /* No overflow */ \
   }
     
 #define ALU_SIMPLE(v) \
@@ -75,8 +74,12 @@
         special[132] = special[132] & ~0x0100; \
   }
 
-extern uint32_t rom[32768];
-extern uint32_t memory[524288 / 4];
+extern int mode;
+
+extern uint32_t rom_1999[1048576 / 4];
+
+extern uint32_t rom[ROM_SIZE / 4];
+extern uint32_t memory[RAM_SIZE / 4];
 extern uint32_t regs[256];
 extern uint32_t special[256];
 

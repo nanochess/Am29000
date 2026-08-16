@@ -2,4 +2,5 @@
 *.o
 SDL2.framework/*
 bin2c
+rom2int
 

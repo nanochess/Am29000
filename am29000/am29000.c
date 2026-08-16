@@ -6,15 +6,25 @@
  **
  ** Creation date: Jul/30/2026.
  ** Revision date: Aug/03/2026. Added endianness change support.
+ ** Revision date: Aug/13/2026. Solved bug in LOADM/STOREM when going from global
+ **                             register to local register.
  */
 
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#endif
 
 #include "am29000.h"
 #include "clgd5429.h"
+#include "clgd5440.h"
 
 /*
  ** Am29000 manual from https://archive.org/details/bitsavers_amdAm29000ual_16568459
@@ -29,7 +39,7 @@
  */
 
 /*
- ** Not implemented instructions:
+ ** Not implemented instructions for a complete Am29000 processor:
  ** o LOADL 0x06 0x07
  ** o LOADSET 0x26 0x27
  ** o MFTLB 0xb6
@@ -37,8 +47,8 @@
  ** o STOREL 0x0e 0x0f
  ** o Arithmetic traps (ADDS, ADDU, SUBS, SUBU)
  **
- ** Not implemented in processor:
- ** o Vector Base Address, not implemented access per address (VF bit 4 of CFG)
+ ** Not implemented for a complete Am29000 processor:
+ ** o Vector Base Address: Access per address (VF bit 4 of CFG)
  ** o Interruption pins (required if the 16550 serial chip is emulated), and the
  **   corresponding IP bit 14 and bits 3-1 in CPS register.
  ** o Single step trace (bits 13 and 12 of CPS register)
@@ -81,8 +91,8 @@
  ** Load/Store Count Remaining (register 135)
  */
 
-uint32_t rom[32768];
-uint32_t memory[524288 / 4];
+uint32_t rom[ROM_SIZE / 4];
+uint32_t memory[RAM_SIZE / 4];
 uint32_t regs[256];
 uint32_t special[256];
 
@@ -98,7 +108,10 @@ uint32_t endianness;
  */
 int read_byte(uint32_t addr)
 {
-    return (read_word(addr) >> (8 * ((addr ^ endianness) & 3))) & 0xff;
+    int c;
+
+    c = (8 * ((addr ^ endianness) & 3));
+    return (read_word(addr) >> c) & 0xff;
 }
 
 /*
@@ -107,11 +120,12 @@ int read_byte(uint32_t addr)
 void write_byte(uint32_t addr, uint32_t byte)
 {
     uint32_t word;
+    int c;
     
-    byte &= 0xff;
+    c = (8 * ((addr ^ endianness) & 3));
     word = read_word(addr);
-    word &= ~(0x000000ffu << (8 * ((addr ^ endianness) & 3)));
-    word |= byte << (8 * ((addr ^ endianness) & 3));
+    word &= ~(0x000000ffu << c);
+    word |= (byte & 0xff) << c;
     write_word(addr, word);
 }
 
@@ -369,6 +383,61 @@ void am29000_emulate(void)
     }
     
     instruction = read_word(pc1);   /* Read the next instruction to execute */
+#if 0   /* Assembler debugging */
+    {
+        if (pc1 == 0x00050150) {    /* Writing data into the disk */
+            fprintf(stderr, "Writing 0x%08x to 0x%08x (0x%08x bytes) ", regs[REG_AA(0x86)], regs[REG_AA(0x87)], regs[REG_AA(0x85)]);
+            c = regs[REG_AA(0x86)];
+            d = regs[REG_AA(0x85)];
+            while (d--) {
+                fprintf(stderr, "%02x ", read_byte(c));
+                c++;
+            }
+            fprintf(stderr, "\n");
+        }
+        if (pc1 == 0x00050448) {
+            fprintf(stderr, "Seeking (1) 0x%08x%08x\n", regs[REG_AA(0x88)], regs[REG_AA(0x89)]);
+        }
+        if (pc1 == 0x0005047c) {    /* Bug in ADDC found here */
+            fprintf(stderr, "Seeking (2) 0x%08x%08x\n", regs[REG_AA(0x88)], regs[REG_AA(0x89)]);
+        }
+    }
+#endif
+#if 0
+    {
+        static int first_time = 1;
+        static int program_base;
+        static char buffer[64];
+        static char *ap;
+        
+        if (first_time == 0) {
+            if (pc1 == program_base + 6904) {   /* Entry for result (6512 for entry, 6712 after binary search ) */
+                c = read_word(program_base + 6524);
+                d = read_word(program_base + 6528);
+                c = (c & 0xff) | ((c & 0xff0000) >> 8) | ((d & 0xff) << 16) | ((d & 0xff0000) << 8);
+                ap = buffer;
+                while (ap - buffer < 63) {
+                    d = read_byte(c);
+                    c++;
+                    *ap++ = d;
+                    if (d == 0)
+                        break;
+                }
+                c = read_word(program_base + 6896);
+                d = read_word(program_base + 6900);
+                c = (c & 0xff) | ((c & 0xff0000) >> 8) | ((d & 0xff) << 16) | ((d & 0xff0000) << 8);
+                fprintf(stderr, "busca_instruccion() = componente = %s (%d) (0x%08x)\n", buffer, regs[REG_AA(0x86)], read_word(c));
+            }
+        } else if (instruction == 0x14688485 && read_word(pc1 + 4) == 0x87866801) {
+            
+            if (first_time) {
+                program_base = pc1 - 6616;
+                first_time = 0;
+            }
+                
+        }
+    }
+#endif
     
     if ((special[2] & 0x0400) == 0) {   /* Update PCs only if not in Freeze mode */
         special[10] = pc0;
@@ -407,11 +476,11 @@ void am29000_emulate(void)
             break;
         case 0x04:  /* MTSRIM */
             c = (instruction >> 8) & 0xff;
-            if (c == 133)
+            if (c == 133) {
                 WRITE_BP(IMM16);
-            else if (c == 134)
+            } else if (c == 134) {
                 WRITE_FC(IMM16);
-            else {
+            } else {
                 special[c] = IMM16;
                 if (c == 3) {
                     if ((special[c] & 4) == 0) {    /* BO = 0 */
@@ -517,19 +586,46 @@ void am29000_emulate(void)
             REG_C = REG_A + IMM;
             break;
         case 0x16:  /* LOAD */
-            switch ((instruction >> 16) & 0xff) {
+            if ((instruction & 0x00100000) != 0) {  /* Set byte pointer */
+                c = REG_B & 3;
+                WRITE_BP(c);
+            }
+            switch ((instruction >> 16) & 0xef) {
+                case 0x00:
+                case 0x20:
+                    if (mode == 1) {
+                        REG_A = clgd5440_pci_mem_read_dword(REG_B);
+                    } else {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
+                    break;
+                case 0x01:
+                    if (mode == 1) {
+                        REG_A = clgd5440_pci_mem_read_dword(REG_B);
+                    } else {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
+                    break;
                 case 0x02:
-                    REG_A = clgd5429_mem_read_word(REG_B / 4);
+                    if (mode == 1) {
+                        REG_A = clgd5440_pci_mem_read_word(REG_B);
+                    } else if (mode == 0) {
+                        REG_A = clgd5429_mem_read_word(REG_B / 4);
+                    } else {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
                     break;
                 case 0x04:
                     REG_A = read_word(REG_B);
                     break;
-                case 0x14:
-                    c = REG_B & 3;
-                    WRITE_BP(c);
-                    REG_A = read_word(REG_B);
-                    break;
                 case 0x41:
+                case 0x61:
                     REG_A = read_isa(REG_B);
                     break;
                 default:
@@ -539,16 +635,16 @@ void am29000_emulate(void)
             }
             break;
         case 0x17:  /* LOAD imm */
-            switch ((instruction >> 16) & 0xff) {
+            if ((instruction & 0x00100000) != 0) {  /* Set byte pointer */
+                c = REG_B & 3;
+                WRITE_BP(c);
+            }
+            switch ((instruction >> 16) & 0xef) {
                 case 0x04:
                     REG_A = read_word(IMM);
                     break;
-                case 0x14:
-                    c = REG_B & 3;
-                    WRITE_BP(c);
-                    REG_A = read_word(IMM);
-                    break;
                 case 0x41:
+                case 0x61:
                     REG_A = read_isa(IMM);
                     break;
                 default:
@@ -592,11 +688,32 @@ void am29000_emulate(void)
             REG_C = REG_A + IMM + c;
             break;
         case 0x1e:  /* STORE */
-            switch ((instruction >> 16) & 0xff) {
+            if ((instruction & 0x00100000) != 0) {  /* Set byte pointer */
+                c = REG_B & 3;
+                WRITE_BP(c);
+            }
+            switch ((instruction >> 16) & 0xef) {
                 case 0x00:
+                case 0x20:
                     c = REG_B;
                     d = REG_A;
-                    e = clgd5429_mem_write_byte(c / 4, d & 0xff);
+                    if (mode == 1)
+                        e = clgd5440_pci_mem_write_dword(c, d);
+                    else
+                        e = clgd5429_mem_write_byte(c / 4, d & 0xff);
+                    if (e == -1) {
+                        fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
+                        debug_info();
+                        exit(1);
+                    }
+                    break;
+                case 0x01:
+                    c = REG_B;
+                    d = REG_A;
+                    if (mode == 1)
+                        e = clgd5440_pci_mem_write_byte(c, d);
+                    else
+                        e = -1;
                     if (e == -1) {
                         fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
                         debug_info();
@@ -606,7 +723,10 @@ void am29000_emulate(void)
                 case 0x02:
                     c = REG_B;
                     d = REG_A;
-                    e = clgd5429_mem_write_word(c / 4, d & 0xffff);
+                    if (mode == 1)
+                        e = clgd5440_pci_mem_write_word(c, d);
+                    else
+                        e = clgd5429_mem_write_word(c / 4, d & 0xffff);
                     if (e == -1) {
                         fprintf(stderr, "Unhandled memory control 0x%08x\n", instruction);
                         debug_info();
@@ -614,19 +734,21 @@ void am29000_emulate(void)
                     }
                     break;
                 case 0x04:
-                    /*                        if (REG_B == 0x80022cb0) {
-                     fprintf(stderr, "Watching address 0x%08x now written with 0x%08x\n", REG_B, REG_A);
-                     if (REG_A == 1) {
-                     debug_info();
-                     exit(1);
-                     }
-                     }*/
+/*                    if (REG_B == 0x80037ca8) {
+                        fprintf(stderr, "Watching address 0x%08x now written with 0x%08x\n", REG_B, REG_A);
+                        if (REG_A == 0xffffffffU) {
+                            debug_info();
+                            exit(1);
+                        }
+                    }*/
                     write_word(REG_B, REG_A);
                     break;
                 case 0x41:
+                case 0x61:
                     write_isa(REG_B, REG_A);
                     break;
                 case 0x42:
+                case 0x62:
                     write_isaw(REG_B, REG_A);
                     break;
                 default:
@@ -636,11 +758,16 @@ void am29000_emulate(void)
             }
             break;
         case 0x1f:  /* STORE */
-            switch ((instruction >> 16) & 0xff) {
+            if ((instruction & 0x00100000) != 0) {  /* Set byte pointer */
+                c = REG_B & 3;
+                WRITE_BP(c);
+            }
+            switch ((instruction >> 16) & 0xef) {
                 case 0x04:
                     write_word(IMM, REG_A);
                     break;
                 case 0x41:
+                case 0x61:
                     write_isa(IMM, REG_A);
                     break;
                 default:
@@ -759,14 +886,22 @@ void am29000_emulate(void)
             switch ((instruction >> 16) & 0xff) {
                 case 0x04:
                     c = REG_B;
-                    d = REG_AA(_RA);
+                    d = _RA;
+                    if (d == 0)
+                        d = (special[129] >> 2) & 0xff;
+                    else if (d >= 128)
+                        d = ((regs[1] / 4 + d) & 0x7f) | 0x80;
                     while (1) {
                         regs[d] = read_word(c);
-                        c += 4;
-                        if (special[135] == 0)
+                        if ((special[135] & 0xff) == 0)
                             break;
-                        special[135] = (special[135] - 1) & 0xff;
-                        d = (((d + 1) & 0x7f) | (d & 0x80));
+                        c += 4;
+                        --special[135];
+                        ++d;
+                        if (d == 128)
+                            d = ((regs[1] / 4) & 0x7f) | 0x80;
+                        else if (d == 256)
+                            d = 0x80;
                     }
                     break;
                 default:
@@ -813,14 +948,22 @@ void am29000_emulate(void)
             switch ((instruction >> 16) & 0xff) {
                 case 0x04:
                     c = REG_B;
-                    d = REG_AA(_RA);
+                    d = _RA;
+                    if (d == 0)
+                        d = (special[129] >> 2) & 0xff;
+                    else if (d >= 128)
+                        d = ((regs[1] / 4 + d) & 0x7f) | 0x80;
                     while (1) {
                         write_word(c, regs[d]);
-                        c += 4;
-                        if (special[135] == 0)
+                        if ((special[135] & 0xff) == 0)
                             break;
-                        special[135] = (special[135] - 1) & 0xff;
-                        d = (((d + 1) & 0x7f) | (d & 0x80));
+                        c += 4;
+                        --special[135];
+                        ++d;
+                        if (d == 128)
+                            d = ((regs[1] / 4) & 0x7f) | 0x80;
+                        else if (d == 256)
+                            d = 0x80;
                     }
                     break;
                 default:
@@ -1135,7 +1278,7 @@ void am29000_emulate(void)
             c = REG_A;
             d = REG_B;
             if (special[132] & 0x0800) {
-                if (c >= d)
+                if (c < d)
                     e = 1;
                 else
                     e = 0;
@@ -1147,7 +1290,7 @@ void am29000_emulate(void)
                     e = 1;
                 c = c + d;
             }
-            d = ((special[132] >> 9) ^ e) & 1;
+            d = ((special[132] >> 11) ^ (special[132] >> 9) ^ e) & 1;
             special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
             c = (c << 1) | (special[131] >> 31);
             special[131] = (special[131] << 1) | d;
@@ -1157,7 +1300,7 @@ void am29000_emulate(void)
             c = REG_A;
             d = IMM;
             if (special[132] & 0x0800) {
-                if (c >= d)
+                if (c < d)
                     e = 1;
                 else
                     e = 0;
@@ -1169,7 +1312,7 @@ void am29000_emulate(void)
                     e = 1;
                 c = c + d;
             }
-            d = ((special[132] >> 9) ^ e) & 1;
+            d = ((special[132] >> 11) ^ (special[132] >> 9) ^ e) & 1;
             special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
             c = (c << 1) | (special[131] >> 31);
             special[131] = (special[131] << 1) | d;
@@ -1179,7 +1322,7 @@ void am29000_emulate(void)
             c = REG_A;
             d = REG_B;
             if (special[132] & 0x0800) {
-                if (c >= d)
+                if (c < d)
                     e = 1;
                 else
                     e = 0;
@@ -1191,7 +1334,7 @@ void am29000_emulate(void)
                     e = 1;
                 c = c + d;
             }
-            d = ((special[132] >> 9) ^ e) & 1;
+            d = ((special[132] >> 11) ^ (special[132] >> 9) ^ e) & 1;
             special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
             special[131] = (special[131] << 1) | d;
             REG_C = c;
@@ -1200,7 +1343,7 @@ void am29000_emulate(void)
             c = REG_A;
             d = IMM;
             if (special[132] & 0x0800) {
-                if (c >= d)
+                if (c < d)
                     e = 1;
                 else
                     e = 0;
@@ -1212,7 +1355,7 @@ void am29000_emulate(void)
                     e = 1;
                 c = c + d;
             }
-            d = ((special[132] >> 9) ^ e) & 1;
+            d = ((special[132] >> 11) ^ (special[132] >> 9) ^ e) & 1;
             special[132] = (special[132] & ~0x0a00) | (d << 11) | ((c & 0x80000000) >> 22);
             special[131] = (special[131] << 1) | d;
             REG_C = c;
@@ -1577,27 +1720,24 @@ void am29000_emulate(void)
                 if (first_time) {
                     first_time = 0;
                     
-                    /*
-                     ** Patch the floppy disk code
-                     */
-                    write_word(0x8002086c, 0x4e618260); /* Support two drives */
-                    write_word(0x80020878, 0xfc000280); /* Call the emulator */
-                    
-                    /*
-                     ** Patch a math emulator strange error
-                     ** It makes it to crash with CONVERT gr96,lr4,0,0,2,1 because fraction is non-zero
-                     ** Probably the Am29000 was replaced with an Am29050 and I inserted
-                     ** more code without testing in the old processor.
-                     */
-                    regs[95] = 0x00040040;  /* Avoid CONVERT trap + MULTIPLY trap */
-                    write_word(0x800097fc, 0x70406161); /* NOP */
-                    /*                        write_word(0x800097fc, 0x05005f04);  gr95 = 0x00040000 this bit avoids the trap */
-                    
-                    /*
-                     ** Patch the Ajedrez button (chess) calling a non-existant file
-                     */
-                    /*write_word(0x8000ba74, 0x00000000);*/ /* Doesn't work */
-                    
+                    if (mode == 0) {    /* G11V1 */
+                        
+                        /*
+                         ** Patch the floppy disk code
+                         */
+                        write_word(0x8002086c, 0x4e618260); /* Support two drives */
+                        write_word(0x80020878, 0xfc000280); /* Call the emulator */
+                        
+                        /*
+                         ** Patch a math emulator strange error
+                         ** It makes it to crash with CONVERT gr96,lr4,0,0,2,1 because fraction is non-zero
+                         ** Probably the Am29000 was replaced with an Am29050 and I inserted
+                         ** more code without testing in the old processor.
+                         */
+                        regs[95] = 0x00040040;  /* Avoid CONVERT trap + MULTIPLY trap */
+                        write_word(0x800097fc, 0x70406161); /* NOP */
+                        /*                        write_word(0x800097fc, 0x05005f04);  gr95 = 0x00040000 this bit avoids the trap */
+                    }
                 }
             }
             /* !!! Add masks */
@@ -1642,9 +1782,9 @@ void am29000_emulate(void)
             /*                fprintf(stderr, "Calling trap...\n");*/
             break;
         case 0xfc:  /* Services */
-            pc0 = REG_B;
             switch ((instruction >> 8) & 0xff) {
                 case 0x01:
+                    pc0 = REG_B;
                     /* Read disk, gr111=track and head, gr113=target address, gr77=bytes */
                     if (debug) {
                         fprintf(stderr, "Reading track %d to 0x%08x\n", regs[111], regs[113]);
@@ -1660,10 +1800,175 @@ void am29000_emulate(void)
                     }
                     break;
                 case 0x02:
+                    pc0 = REG_B;
                     floppy_scsi(regs[REG_AA(130)], regs[REG_AA(131)], regs[REG_AA(132)], regs[REG_AA(133)], regs[REG_AA(134)], regs[REG_AA(135)]);
                     break;
+#if 0   /* Assembler debugging */
+                case 0xff:
+                    c = regs[REG_AA(0x86)];
+                    if (c) {
+                        char buffer[256];
+                        char *ap;
+                        
+                        d = c + 12;
+                        ap = buffer;
+                        while (*ap++ = read_byte(d))
+                            d++;
+                        fprintf(stderr, "Tipo 0x%08x, pos 0x%08x '%s'\n", read_word(c + 4), read_word(c + 8), buffer);
+                    }
+                    d = 0x00;
+                    regs[98] = (c != d) ? AM29K_TRUE : AM29K_FALSE;
+                    break;
+#endif
+#ifdef __APPLE__
+                case 0x15:  /* resolver (solve DNS name) */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Get name */
+                {
+                    struct addrinfo hints, *result, *rp;
+                    int s;
+                    char hostname[256];
+                    char *ap;
+                    
+                    ap = hostname;
+                    while (ap < hostname + 255) {
+                        *ap++ = read_byte(c);
+                        c++;
+                    }
+                    *ap = '\0';
+                    /* Returns -1 for non-existent */
+                    /* Returns host order domain number */
+                    
+                    memset(&hints, 0, sizeof(hints));
+                    hints.ai_family = AF_INET;  /* ipv4 */
+                    hints.ai_socktype = SOCK_STREAM;
+                    
+                    s = getaddrinfo(hostname, NULL, &hints, &result);
+                    if (s != 0) {
+                        regs[96] = -1;
+                    } else {
+                        struct sockaddr_in *ipv4;
+                        
+                        rp = result;
+                        ipv4 = (struct sockaddr_in *) rp->ai_addr;
+                        regs[96] = ipv4->sin_addr.s_addr;
+                    }
+                    fprintf(stderr, "Solving %s to 0x%08x, returning to 0x%08x\n", hostname, regs[96], regs[REG_AA(0x80)]);
+                }
+                    break;
+                case 0x1b:  /* tcp_abrir */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Source port !!! */
+                    d = regs[REG_AA(0x83)]; /* IP address */
+                    e = regs[REG_AA(0x84)]; /* Target port */
+                {
+                    int s;
+                    struct sockaddr_in sserver;
+                    
+                    s = socket(AF_INET, SOCK_STREAM, 0);
+                    if (s < 0) {
+                        regs[96] = -1;  /* !!! */
+                    } else {
+                        sserver.sin_family = AF_INET;
+                        sserver.sin_addr.s_addr = d;
+                        sserver.sin_port = htons(e);
+                        if (connect(s, (struct sockaddr *) &sserver, sizeof(sserver)) != 0) {
+                            close(s);
+                            regs[96] = -1;  /* !!! */
+                        } else {
+                            regs[96] = s;
+                        }
+                    }
+                    fprintf(stderr, "tcp_abrir(0x%08x, 0x%08x, 0x%08x), returning 0x%08x\n", c, d, e, regs[96]);
+                }
+                    break;
+                case 0x1d:  /* tcp_leer */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    d = regs[REG_AA(0x83)]; /* Address */
+                    e = regs[REG_AA(0x84)]; /* Bytes */
+                {
+                    int s;
+                    unsigned char *buffer;
+                    
+                    buffer = malloc(e + 1);
+                    s = c;
+                    f = read(s, buffer, e);
+                    if (f < 0) {
+                        fprintf(stderr, "errno = %d\n", errno);
+                        if (errno == EWOULDBLOCK || errno == EINTR)
+                            f = -33;    /* My OS value for EWOULDBLOCK */
+                        else
+                            f = -1;
+                    } else {
+                        for (e = 0; e < f; e++) {
+                            write_byte(d, buffer[e]);
+                            d++;
+                        }
+                    }
+                    regs[96] = f;
+                    fprintf(stderr, "tcp_leer(0x%08x, 0x%08x, 0x%08x), returning 0x%08x\n", c, d, e, regs[96]);
+                    free(buffer);
+                }
+                    break;
+                case 0x1e:  /* tcp_mandar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    d = regs[REG_AA(0x83)]; /* Address */
+                    e = regs[REG_AA(0x84)]; /* Bytes */
+                {
+                    int s;
+                    unsigned char *buffer;
+                    
+                    buffer = malloc(e + 1);
+                    s = c;
+                    f = e;
+                    for (e = 0; e < f; e++) {
+                        buffer[e] = read_byte(d);
+                        d++;
+                    }
+                    buffer[e] = '\0';
+                    f = write(s, buffer, e);
+                    regs[96] = f;
+                    fprintf(stderr, "tcp_mandar(0x%08x, 0x%08x, 0x%08x) '%s', returning 0x%08x\n", c, d, e, buffer, regs[96]);
+                    free(buffer);
+                }
+                    break;
+                case 0x1f:  /* tcp_vaciar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                {
+                    int s;
+                    
+                    s = c;
+                }
+                    break;
+                case 0x20:  /* tcp_cerrar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                {
+                    int s;
+                    
+                    s = c;
+                    close(c);
+                    fprintf(stderr, "tcp_cerrar(0x%08x)\n", c);
+                    }
+                    break;
+                case 0x21:  /* tcp_aborta */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    {
+                        int s;
+                        
+                        s = c;
+                        close(c);
+                        fprintf(stderr, "tcp_aborta(0x%08x)\n", c);
+                    }
+                    break;
+#endif
                 default:
-                    fprintf(stderr, "Unknown service requested (PC = 0x%08x)\n", pc1);
+                    fprintf(stderr, "Unknown service requested 0x%02x (PC = 0x%08x, lr2 = 0x%08x, lr0 = 0x%08x)\n", (instruction >> 8) & 0xff, pc2, regs[REG_AA(0x82)], regs[REG_AA(0x80)]);
+                    debug_info();
                     exit(1);
             }
             break;

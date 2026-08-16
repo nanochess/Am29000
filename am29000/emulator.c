@@ -920,9 +920,15 @@ int main(int argc, const char *argv[])
     count = 0;
     while (!quit) {
         if (processor_running) {
-            do {
-                am29000_emulate();
-            } while (count % 100000 != 0) ;
+            if (mode == 1) {
+                do {
+                    am29000_emulate();
+                } while (count % 200000 != 0) ; /* 12 mhz */
+            } else {
+                do {
+                    am29000_emulate();
+                } while (count % 100000 != 0) ; /* 6 mhz */
+            }
         }
         SDL_Delay(1000 / 60);
         if (mode == 1) {

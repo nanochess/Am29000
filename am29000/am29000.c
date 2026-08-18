@@ -354,6 +354,45 @@ void disassemble(uint32_t pc, uint32_t instruction, char *p)
 }
 
 /*
+ ** If you ask two times for the same hostname to Windows,
+ ** it will stall you 15 seconds.
+ */
+#define MAX_DNS 32
+
+struct dns_record {
+    char hostname[256];
+    uint32_t ip;
+} dns[MAX_DNS];
+
+uint32_t dns_read_cache(char *hostname)
+{
+    struct dns_record temp;
+    int c;
+    int d;
+    
+    for (c = 0; c < MAX_DNS; c++) {
+        if (strcmp(hostname, dns[c].hostname) == 0) {
+            temp = dns[c];
+            for (d = c - 1; d >= 0; d--)
+                dns[d + 1] = dns[d];
+            dns[0] = temp;  /* Move to front */
+            return dns[0].ip;
+        }
+    }
+    return 0;
+}
+
+void dns_write_cache(char *hostname, uint32_t ip)
+{
+    int d;
+    
+    for (d = MAX_DNS - 2; d >= 0; d--)
+        dns[d + 1] = dns[d];
+    strcpy(dns[0].hostname, hostname); /* Put in front */
+    dns[0].ip = ip;
+}
+
+/*
 ** Emulate one instruction
 */
 void am29000_emulate(void)
@@ -1844,22 +1883,29 @@ void am29000_emulate(void)
                         c++;
                     }
                     *ap = '\0';
-                    /* Returns -1 for non-existent */
-                    /* Returns host order domain number */
                     
-                    memset(&hints, 0, sizeof(hints));
-                    hints.ai_family = AF_INET;  /* ipv4 */
-                    hints.ai_socktype = SOCK_STREAM;
-                    
-                    s = getaddrinfo(hostname, NULL, &hints, &result);
-                    if (s != 0) {
-                        regs[96] = -1;
+                    c = dns_read_cache(hostname);
+                    if (c != 0) {
+                        regs[96] = c;
                     } else {
-                        struct sockaddr_in *ipv4;
+                        /* Returns -1 for non-existent */
+                        /* Returns host order domain number */
                         
-                        rp = result;
-                        ipv4 = (struct sockaddr_in *) rp->ai_addr;
-                        regs[96] = ipv4->sin_addr.s_addr;
+                        memset(&hints, 0, sizeof(hints));
+                        hints.ai_family = AF_INET;  /* ipv4 */
+                        hints.ai_socktype = SOCK_STREAM;
+                        
+                        s = getaddrinfo(hostname, NULL, &hints, &result);
+                        if (s != 0) {
+                            regs[96] = -1;
+                        } else {
+                            struct sockaddr_in *ipv4;
+                            
+                            rp = result;
+                            ipv4 = (struct sockaddr_in *) rp->ai_addr;
+                            regs[96] = ipv4->sin_addr.s_addr;
+                            dns_write_cache(hostname, regs[96]);
+                        }
                     }
                     fprintf(stderr, "Solving %s to 0x%08x, returning to 0x%08x\n", hostname, regs[96], regs[REG_AA(0x80)]);
                 }
@@ -1877,6 +1923,12 @@ void am29000_emulate(void)
                     if (s == INVALID_SOCKET) {
                         regs[96] = -1;  /* !!! */
                     } else {
+						static DWORD ok = 1;
+						int result;
+
+						result = setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *) &ok, sizeof(ok));
+						/* Assume it worked */
+
                         sserver.sin_family = AF_INET;
                         sserver.sin_addr.s_addr = d;
                         sserver.sin_port = htons(e);
@@ -1990,22 +2042,28 @@ void am29000_emulate(void)
                         c++;
                     }
                     *ap = '\0';
-                    /* Returns -1 for non-existent */
-                    /* Returns host order domain number */
-                    
-                    memset(&hints, 0, sizeof(hints));
-                    hints.ai_family = AF_INET;  /* ipv4 */
-                    hints.ai_socktype = SOCK_STREAM;
-                    
-                    s = getaddrinfo(hostname, NULL, &hints, &result);
-                    if (s != 0) {
-                        regs[96] = -1;
+                    c = dns_read_cache(hostname);
+                    if (c != 0) {
+                        regs[96] = c;
                     } else {
-                        struct sockaddr_in *ipv4;
+                        /* Returns -1 for non-existent */
+                        /* Returns host order domain number */
                         
-                        rp = result;
-                        ipv4 = (struct sockaddr_in *) rp->ai_addr;
-                        regs[96] = ipv4->sin_addr.s_addr;
+                        memset(&hints, 0, sizeof(hints));
+                        hints.ai_family = AF_INET;  /* ipv4 */
+                        hints.ai_socktype = SOCK_STREAM;
+                        
+                        s = getaddrinfo(hostname, NULL, &hints, &result);
+                        if (s != 0) {
+                            regs[96] = -1;
+                        } else {
+                            struct sockaddr_in *ipv4;
+                            
+                            rp = result;
+                            ipv4 = (struct sockaddr_in *) rp->ai_addr;
+                            regs[96] = ipv4->sin_addr.s_addr;
+                            dns_write_cache(hostname, regs[96]);
+                        }
                     }
                     fprintf(stderr, "Solving %s to 0x%08x, returning to 0x%08x\n", hostname, regs[96], regs[REG_AA(0x80)]);
                 }

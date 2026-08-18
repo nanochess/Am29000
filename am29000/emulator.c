@@ -20,17 +20,18 @@
  ** Revision date: Aug/13/2026. Hard drive image now is marked as non-removable.
  */
 
-#include <stdio.h>
-
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>
 #include <wchar.h>
 #include <SDL.h>
+#include <winsock2.h>
 #else
 #include <SDL2/SDL.h>
 #endif
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -835,6 +836,7 @@ int main(int argc, const char *argv[])
     static int next_file = 0;
 
 #ifdef _WIN32
+    WSADATA data;
     wchar_t *ap;
     
     SHGetFolderPathW(NULL, CSIDL_MYDOCUMENTS, NULL, SHGFP_TYPE_CURRENT, printer_filename);
@@ -848,6 +850,7 @@ int main(int argc, const char *argv[])
             break;
     } while (1) ;
     printer_file = _wfopen(printer_filename, L"w");
+    WSAStartup(MAKEWORD(2, 2), &data);
 #else
     char *ap;
     
@@ -973,5 +976,8 @@ int main(int argc, const char *argv[])
     
     //Quit SDL subsystems
     SDL_Quit();
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }

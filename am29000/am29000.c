@@ -10,6 +10,10 @@
  **                             register to local register.
  */
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -20,6 +24,10 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#endif
+#ifdef _WIN32
+#include <winsock2.h>
+#include <WS2tcpip.h>
 #endif
 
 #include "am29000.h"
@@ -1820,6 +1828,152 @@ void am29000_emulate(void)
                     regs[98] = (c != d) ? AM29K_TRUE : AM29K_FALSE;
                     break;
 #endif
+#ifdef _WIN32
+                case 0x15:  /* resolver (solve DNS name) */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Get name */
+                {
+                    struct addrinfo hints, *result, *rp;
+                    int s;
+                    char hostname[256];
+                    char *ap;
+                    
+                    ap = hostname;
+                    while (ap < hostname + 255) {
+                        *ap++ = read_byte(c);
+                        c++;
+                    }
+                    *ap = '\0';
+                    /* Returns -1 for non-existent */
+                    /* Returns host order domain number */
+                    
+                    memset(&hints, 0, sizeof(hints));
+                    hints.ai_family = AF_INET;  /* ipv4 */
+                    hints.ai_socktype = SOCK_STREAM;
+                    
+                    s = getaddrinfo(hostname, NULL, &hints, &result);
+                    if (s != 0) {
+                        regs[96] = -1;
+                    } else {
+                        struct sockaddr_in *ipv4;
+                        
+                        rp = result;
+                        ipv4 = (struct sockaddr_in *) rp->ai_addr;
+                        regs[96] = ipv4->sin_addr.s_addr;
+                    }
+                    fprintf(stderr, "Solving %s to 0x%08x, returning to 0x%08x\n", hostname, regs[96], regs[REG_AA(0x80)]);
+                }
+                    break;
+                case 0x1b:  /* tcp_abrir */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Source port !!! */
+                    d = regs[REG_AA(0x83)]; /* IP address */
+                    e = regs[REG_AA(0x84)]; /* Target port */
+                {
+                    SOCKET s;
+                    struct sockaddr_in sserver;
+                    
+                    s = socket(AF_INET, SOCK_STREAM, 0);
+                    if (s == INVALID_SOCKET) {
+                        regs[96] = -1;  /* !!! */
+                    } else {
+                        sserver.sin_family = AF_INET;
+                        sserver.sin_addr.s_addr = d;
+                        sserver.sin_port = htons(e);
+                        if (connect(s, (struct sockaddr *) &sserver, sizeof(sserver)) != 0) {
+                            closesocket(s);
+                            regs[96] = -1;  /* !!! */
+                        } else {
+                            regs[96] = (uint32_t) s;
+                        }
+                    }
+                    fprintf(stderr, "tcp_abrir(0x%08x, 0x%08x, 0x%08x), returning 0x%08x\n", c, d, e, regs[96]);
+                }
+                    break;
+                case 0x1d:  /* tcp_leer */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    d = regs[REG_AA(0x83)]; /* Address */
+                    e = regs[REG_AA(0x84)]; /* Bytes */
+                {
+                    SOCKET s;
+                    unsigned char *buffer;
+                    
+                    buffer = malloc(e + 1);
+                    s = (SOCKET) c;
+                    f = recv(s, buffer, e, 0);
+                    if (f < 0) {
+                        fprintf(stderr, "errno = %d\n", WSAGetLastError());
+                        if (WSAGetLastError() == WSAEWOULDBLOCK || WSAGetLastError() == WSAEINTR)
+                            f = -33;    /* My OS value for EWOULDBLOCK */
+                        else
+                            f = -1;
+                    } else {
+                        for (e = 0; e < f; e++) {
+                            write_byte(d, buffer[e]);
+                            d++;
+                        }
+                    }
+                    regs[96] = f;
+                    fprintf(stderr, "tcp_leer(0x%08x, 0x%08x, 0x%08x), returning 0x%08x\n", c, d, e, regs[96]);
+                    free(buffer);
+                }
+                    break;
+                case 0x1e:  /* tcp_mandar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    d = regs[REG_AA(0x83)]; /* Address */
+                    e = regs[REG_AA(0x84)]; /* Bytes */
+                {
+                    SOCKET s;
+                    unsigned char *buffer;
+                    
+                    buffer = malloc(e + 1);
+                    s = (SOCKET) c;
+                    f = e;
+                    for (e = 0; e < f; e++) {
+                        buffer[e] = read_byte(d);
+                        d++;
+                    }
+                    buffer[e] = '\0';
+                    f = send(s, buffer, e, 0);
+                    regs[96] = f;
+                    fprintf(stderr, "tcp_mandar(0x%08x, 0x%08x, 0x%08x) '%s', returning 0x%08x\n", c, d, e, buffer, regs[96]);
+                    free(buffer);
+                }
+                    break;
+                case 0x1f:  /* tcp_vaciar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                {
+                    SOCKET s;
+                    
+                    s = (SOCKET) c;
+                }
+                    break;
+                case 0x20:  /* tcp_cerrar */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                {
+                    SOCKET s;
+                    
+                    s = (SOCKET) c;
+                    closesocket(s);
+                    fprintf(stderr, "tcp_cerrar(0x%08x)\n", c);
+                    }
+                    break;
+                case 0x21:  /* tcp_aborta */
+                    pc0 = REG_B;
+                    c = regs[REG_AA(0x82)]; /* Socket */
+                    {
+                        SOCKET s;
+                        
+                        s = (SOCKET) c;
+                        closesocket(s);
+                        fprintf(stderr, "tcp_aborta(0x%08x)\n", c);
+                    }
+                    break;
+#endif
 #ifdef __APPLE__
                 case 0x15:  /* resolver (solve DNS name) */
                     pc0 = REG_B;
@@ -1950,7 +2104,7 @@ void am29000_emulate(void)
                     int s;
                     
                     s = c;
-                    close(c);
+                    close(s);
                     fprintf(stderr, "tcp_cerrar(0x%08x)\n", c);
                     }
                     break;
@@ -1961,7 +2115,7 @@ void am29000_emulate(void)
                         int s;
                         
                         s = c;
-                        close(c);
+                        close(s);
                         fprintf(stderr, "tcp_aborta(0x%08x)\n", c);
                     }
                     break;

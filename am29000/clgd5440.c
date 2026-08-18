@@ -6,6 +6,7 @@
  **
  ** Creation date: Aug/10/2026. Based on the CL-GD5429 driver.
  ** Revision date: Aug/11/2026. Implemented bitmap expansion.
+ ** Revision date: Aug/17/2026. Expanded to 2mb of RAM.
  */
 
 #include <stdio.h>
@@ -59,8 +60,8 @@ static void clgd5440_bitmap_expansion(uint32_t word)
         current_width -= c;
         while (c > 0) {
             if (byte & mask) {
-                vga_pci.ram[(current_target + 0) & 0x0fffff] = vga_pci.gr[0x01];
-                vga_pci.ram[(current_target + 1) & 0x0fffff] = vga_pci.gr[0x11];
+                vga_pci.ram[(current_target + 0) & CLGD5440_RAM_MASK] = vga_pci.gr[0x01];
+                vga_pci.ram[(current_target + 1) & CLGD5440_RAM_MASK] = vga_pci.gr[0x11];
             }
             mask >>= 1;
             current_target += 2;
@@ -111,13 +112,13 @@ static void clgd5440_start_bitblt(void)
         do {
             source = vga_pci.gr[0x2c] | (vga_pci.gr[0x2d] << 8) | (vga_pci.gr[0x2e] << 16); /* Source address */
             source += d * 16;
-            source &= 0x0fffff;
-            target &= 0x0fffff;
-            if (source + width <= 0x100000 && target + width <= 0x100000) {
+            source &= CLGD5440_RAM_MASK;
+            target &= CLGD5440_RAM_MASK;
+            if (source + width < CLGD5440_RAM_SIZE && target + width < CLGD5440_RAM_SIZE) {
+                target2 = target;
+                e = width + 1;
                 /* Operations with pattern in multiples of 8 */
                 if (vga_pci.gr[0x32] == 0x0d) { /* Copy */
-                    target2 = target;
-                    e = width + 1;
                     do {
                         if (e > 16)
                             f = 16;
@@ -128,8 +129,6 @@ static void clgd5440_start_bitblt(void)
                         e -= f;
                     } while (e) ;
                 } else if (vga_pci.gr[0x32] == 0x59) {  /* XOR */
-                    target2 = target;
-                    e = width + 1;
                     do {
                         if (e > 16)
                             f = 16;
@@ -151,8 +150,8 @@ static void clgd5440_start_bitblt(void)
         if (vga_pci.gr[0x30] & 1) { /* Copy in reverse direction */
             /* Source and target addresses point to the lower-right byte */
             do {
-                source &= 0x0fffff;
-                target &= 0x0fffff;
+                source &= CLGD5440_RAM_MASK;
+                target &= CLGD5440_RAM_MASK;
                 if (source - width >= 0 && target - width >= 0) {
                     unsigned char *p1 = &vga_pci.ram[source];
                     unsigned char *p2 = &vga_pci.ram[target];
@@ -173,9 +172,9 @@ static void clgd5440_start_bitblt(void)
             } while (height--) ;
         } else {
             do {
-                source &= 0x0fffff;
-                target &= 0x0fffff;
-                if (source + width <= 0x100000 && target + width <= 0x100000) {
+                source &= CLGD5440_RAM_MASK;
+                target &= CLGD5440_RAM_MASK;
+                if (source + width <= CLGD5440_RAM_SIZE && target + width <= CLGD5440_RAM_SIZE) {
                     if (vga_pci.gr[0x32] == 0x0d) {
                         memcpy(&vga_pci.ram[target], &vga_pci.ram[source], width + 1);
                     } else if (vga_pci.gr[0x32] == 0x59) {
@@ -363,11 +362,11 @@ int clgd5440_pci_mem_write_word(int address, int word)
 {
     if ((address & 0xff000000) == 0x81000000) { /* 16 mb. aperture */
         if ((address & 2) == 0) {
-            address &= 0x000ffffc;
+            address &= CLGD5440_RAM_MASK & ~3;
             vga_pci.ram[address] = word;
             vga_pci.ram[address + 1] = word >> 8;
         } else {
-            address &= 0x000ffffc;
+            address &= CLGD5440_RAM_MASK & ~3;
             vga_pci.ram[address + 2] = word >> 16;
             vga_pci.ram[address + 3] = word >> 24;
         }
@@ -396,7 +395,7 @@ int clgd5440_pci_mem_write_dword(int address, int word)
             clgd5440_bitmap_expansion(word);
             return 0;
         }
-        address &= 0x000ffffc;
+        address &= CLGD5440_RAM_MASK & ~3;
         vga_pci.ram[address] = word;
         vga_pci.ram[address + 1] = word >> 8;
         vga_pci.ram[address + 2] = word >> 16;
@@ -468,7 +467,7 @@ int clgd5440_pci_mem_write_dword(int address, int word)
 int clgd5440_pci_mem_read_word(int address)
 {
     if ((address & 0xff000000) == 0x81000000) { /* Linear memory */
-        address &= 0x000ffffc;
+        address &= CLGD5440_RAM_MASK & ~3;
         return vga_pci.ram[address] | (vga_pci.ram[address + 1] << 8) | (vga_pci.ram[address + 2] << 16) | (vga_pci.ram[address + 3] << 24);
     }
     fprintf(stderr, "CL-GD5440: Unhandled 16-bit read at address 0x%08x\n", address);
@@ -500,7 +499,7 @@ static int clgd5440_pci_header[] = {
 };
 
 /*
- ** Read a 16-bit word from RAM.
+ ** Read a 32-bit word from RAM.
  */
 int clgd5440_pci_mem_read_dword(int address)
 {
@@ -528,17 +527,9 @@ int clgd5440_pci_mem_read_dword(int address)
                 return vga_pci.gr[0x31];
         }
     }
-    if (address < 0x000a0000 || address > 0x000bffff) {
-        return -1;
-    }
-    address -= 0x000a0000;
-    if (vga_pci.gr[0x0b] == 0x00) {
-        address += (vga_pci.gr[0x09] & 0xfc) << 12;
-        if (address >= 0x100000) {    /* 1 MB of RAM */
-            fprintf(stderr, "CL-GD5440: Too big address 0x%08x\n", address);
-            return -1;
-        }
-        return (vga_pci.ram[address + 1] << 8) | vga_pci.ram[address];
+    if ((address & 0xff000000) == 0x81000000) {
+        address &= CLGD5440_RAM_MASK & ~3;
+        return vga_pci.ram[address] | (vga_pci.ram[address + 1] << 8) | (vga_pci.ram[address + 2] << 16) | (vga_pci.ram[address + 3] << 24);
     }
     fprintf(stderr, "CL-GD5440: Unhandled byte read address 0x%08x\n", address);
     debug_info();
@@ -558,8 +549,8 @@ void clgd5440_save_cursor(void)
         return;
     source = (vga_pci.cursor_y * 800 + vga_pci.cursor_x) * 2;
     for (y = 0; y < 32; y++) {
-        source &= 0x0fffff;
-        if (source + 64 > 0x100000)
+        source &= CLGD5440_RAM_MASK;
+        if (source + 64 > CLGD5440_RAM_SIZE)
             continue;
         memcpy(&vga_pci.cursor[y * 64], &vga_pci.ram[source], 64);
         source += 800 * 2;
@@ -578,8 +569,8 @@ void clgd5440_restore_cursor(void)
         return;
     source = (vga_pci.cursor_y * 800 + vga_pci.cursor_x) * 2;
     for (y = 0; y < 32; y++) {
-        source &= 0x0fffff;
-        if (source + 64 > 0x100000)
+        source &= CLGD5440_RAM_MASK;
+        if (source + 64 > CLGD5440_RAM_SIZE)
             continue;
         memcpy(&vga_pci.ram[source], &vga_pci.cursor[y * 64], 64);
         source += 800 * 2;
@@ -605,9 +596,9 @@ void clgd5440_draw_cursor(void)
     color_1 = ((vga_pci.palette[0] & 0x3e) << 10) | ((vga_pci.palette[1] & 0x3f) << 5) | ((vga_pci.palette[2] & 0x3e) >> 1);
     color_2 = ((vga_pci.palette[765] & 0x3e) << 10) | ((vga_pci.palette[766] & 0x3f) << 5) | ((vga_pci.palette[767] & 0x3e) >> 1);
     for (y = 0; y < 32; y++) {
-        source = 0xfc000 + (vga_pci.sr[0x13] * 256) + y * 4;
+        source = (CLGD5440_RAM_SIZE - 16384) + (vga_pci.sr[0x13] * 256) + y * 4;
         target = ((vga_pci.cursor_y + y) * 800 + vga_pci.cursor_x) * 2;
-        if (target + 64 > 0x100000)
+        if (target + 64 > CLGD5440_RAM_SIZE)
             continue;
         for (x = 0; x < 4; x++) {
             for (c = 0x80; c; c >>= 1) {

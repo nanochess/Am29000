@@ -1867,6 +1867,13 @@ void am29000_emulate(void)
                     regs[98] = (c != d) ? AM29K_TRUE : AM29K_FALSE;
                     break;
 #endif
+                    /* Fénix definitions
+                     ** #define EHOSTDOWN         (-34)
+                     ** #define EINTR             (-34)
+                     ** #define EWOULDBLOCK       (-33)
+                     ** #define ECONNABORTED      (-32)
+                     ** #define ETIMEDOUT         (-31)
+                     */
 #ifdef _WIN32
                 case 0x15:  /* resolver (solve DNS name) */
                     pc0 = REG_B;
@@ -1897,7 +1904,7 @@ void am29000_emulate(void)
                         
                         s = getaddrinfo(hostname, NULL, &hints, &result);
                         if (s != 0) {
-                            regs[96] = -1;
+                            regs[96] = -34;
                         } else {
                             struct sockaddr_in *ipv4;
                             
@@ -1926,17 +1933,26 @@ void am29000_emulate(void)
 						static DWORD ok = 1;
 						int result;
 
-						result = setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *) &ok, sizeof(ok));
-						/* Assume it worked */
-
                         sserver.sin_family = AF_INET;
                         sserver.sin_addr.s_addr = d;
                         sserver.sin_port = htons(e);
                         if (connect(s, (struct sockaddr *) &sserver, sizeof(sserver)) != 0) {
+                            f = WSAGetLastError();
+                            if (f == WSAEWOULDBLOCK || f == WSAEINTR || f == WSAEINPROGRESS || f == WSAEALREADY)
+                                f = -33;    /* My OS value for EWOULDBLOCK */
+                            else if (f == WSAENETDOWN || f == WSAENETUNREACH || f == WSAEHOSTUNREACH)
+                                f = -34;
+                            else if (f == WSAECONNREFUSED)
+                                f = -32;
+                            else /*if (f == WSAETIMEDOUT)*/
+                                f = -31;
                             closesocket(s);
-                            regs[96] = -1;  /* !!! */
+                            regs[96] = f;
                         } else {
                             regs[96] = (uint32_t) s;
+                            f = 1;  /* Non-blocking mode enabled */
+                            result = ioctlsocket(s, FIONBIO, &f);
+                            /* Assume it worked */
                         }
                     }
                     fprintf(stderr, "tcp_abrir(0x%08x, 0x%08x, 0x%08x), returning 0x%08x\n", c, d, e, regs[96]);
@@ -1955,11 +1971,15 @@ void am29000_emulate(void)
                     s = (SOCKET) c;
                     f = recv(s, buffer, e, 0);
                     if (f < 0) {
-                        fprintf(stderr, "errno = %d\n", WSAGetLastError());
-                        if (WSAGetLastError() == WSAEWOULDBLOCK || WSAGetLastError() == WSAEINTR)
+                        f = WSAGetLastError();
+                        if (f == WSAEWOULDBLOCK || f == WSAEINTR || f == WSAEINPROGRESS || f == WSAEALREADY)
                             f = -33;    /* My OS value for EWOULDBLOCK */
-                        else
-                            f = -1;
+                        else if (f == WSAENETDOWN || f == WSAENETUNREACH || f == WSAEHOSTUNREACH)
+                            f = -34;
+                        else if (f == WSAECONNREFUSED)
+                            f = -32;
+                        else /*if (f == WSAETIMEDOUT)*/
+                            f = -31;
                     } else {
                         for (e = 0; e < f; e++) {
                             write_byte(d, buffer[e]);
@@ -1989,6 +2009,17 @@ void am29000_emulate(void)
                     }
                     buffer[e] = '\0';
                     f = send(s, buffer, e, 0);
+                    if (f == SOCKET_ERROR) {
+                        f = WSAGetLastError();
+                        if (f == WSAEWOULDBLOCK || f == WSAEINTR || f == WSAEINPROGRESS || f == WSAEALREADY)
+                            f = -33;    /* My OS value for EWOULDBLOCK */
+                        else if (f == WSAENETDOWN || f == WSAENETUNREACH || f == WSAEHOSTUNREACH)
+                            f = -34;
+                        else if (f == WSAECONNREFUSED)
+                            f = -32;
+                        else /*if (f == WSAETIMEDOUT)*/
+                            f = -31;
+                    }
                     regs[96] = f;
                     fprintf(stderr, "tcp_mandar(0x%08x, 0x%08x, 0x%08x) '%s', returning 0x%08x\n", c, d, e, buffer, regs[96]);
                     free(buffer);
@@ -2012,18 +2043,18 @@ void am29000_emulate(void)
                     s = (SOCKET) c;
                     closesocket(s);
                     fprintf(stderr, "tcp_cerrar(0x%08x)\n", c);
-                    }
+                }
                     break;
                 case 0x21:  /* tcp_aborta */
                     pc0 = REG_B;
                     c = regs[REG_AA(0x82)]; /* Socket */
-                    {
-                        SOCKET s;
+                {
+                    SOCKET s;
                         
-                        s = (SOCKET) c;
-                        closesocket(s);
-                        fprintf(stderr, "tcp_aborta(0x%08x)\n", c);
-                    }
+                    s = (SOCKET) c;
+                    closesocket(s);
+                    fprintf(stderr, "tcp_aborta(0x%08x)\n", c);
+                }
                     break;
 #endif
 #ifdef __APPLE__

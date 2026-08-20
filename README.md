@@ -38,7 +38,7 @@ The Javascript release can be found in the _js_ directory.
 
 If everything goes right, you should see a blue screen, and then drag&drop the _disk.img_ file I've provided into the window. The operating system should boot up immediately, I didn't add delays for disk access.
 
-In the Javascript version the disk is preloaded automatically. In both version you should wait a few seconds while the OS builds fonts for the system.
+In the Javascript version the disk is preloaded automatically. In both versions you should wait a few seconds while the OS builds fonts for the system.
 
 That's it, you can play moving the windows, clicking the buttons to access the programs, one of these Archivero will allow you to see the full filesystem. If you do right-click on the window around the buttons, you'll change the color scheme.
 

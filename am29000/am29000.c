@@ -418,10 +418,10 @@ void am29000_emulate(void)
             special[9] |= 0x04000000;   /* Overflow */
         special[9] |= 0x02000000;   /* Interrupt */
     } else {
-        special[8] = special[8] - 1;    /* Count down */
+        special[8]--;    /* Count down */
     }
-    if ((special[9] & 0x03000000) == 0x03000000) {  /* Interrupt + IE */
-        if ((special[2] & 0x0401) == 0) { /* DA = 0 */
+    if ((special[2] & 0x0401) == 0) { /* DA = 0 */
+        if ((special[9] & 0x03000000) == 0x03000000) {  /* Interrupt + IE */
             special[10] = pc0;
             special[11] = pc1;
             special[12] = pc2;

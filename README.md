@@ -10,7 +10,7 @@ A full article about this operating system is available at [https://nanochess.or
 
 There is now a Javascript emulator runnable at [https://nanochess.org/am29000_emulator.html](https://nanochess.org/am29000_emulator.html)
 
-I restored most of my backups from 1999, and now you can see my development environment, C compiler, assembler, some games, a printed circuit board editor, an early desktop publishing application, and a web browser. The web browser can connect to Internet (currently only in macOS).
+I restored most of my backups from 1999, and now you can see my development environment, C compiler, assembler, some games, a printed circuit board editor, an early desktop publishing application, and a web browser. The emulator allows the web browser to connect to Internet (both Windows and macOS).
 
 A full article about the C compiler and the web browser is available at [https://nanochess.org/am29000_c_compiler_web_browser.html](https://nanochess.org/am29000_c_compiler_web_browser.html)
 
@@ -71,7 +71,7 @@ Publivisión is almost the first working version from the last day of 1998, so i
 
 Circuito Impreso is my PCB editor and it is the most polished application at the time. It is pretty easy to use, just experiment with left click (draw) and right click (select). The credits image was scanned from an AMD manual cover. There are a few bugs in the display driver when moving items, but I'll correct it later.
 
-To run the web browser, open a file browser (Archivero), and click in Explorador de Internet. I also put the source code to my very first browser (more like a viewer), and I don’t know if it can be compiled, but probably it would need some changes. The browser can connect to Internet if you run it on a macOS, so you can experience it like in 1999. I still need to code the Sockets portion for Windows.
+To run the web browser, open a file browser (Archivero), and click in Explorador de Internet. I also put the source code to my very first browser (more like a viewer), and I don’t know if it can be compiled, but probably it would need some changes. The browser can connect to Internet both in Windows and macOS, so you can experience it like in 1999.
 
 Another thing you’ll notice in the web browser, I’m still not emulating the Am29050 processor, and the JPEG library depends a lot on the multiplication instruction, so it is incredibly slow for displaying JPEG images. It is so 1999! 
 

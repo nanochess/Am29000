@@ -36,9 +36,9 @@ The Javascript release can be found in the _js_ directory.
 
 ## Filesystem
 
-Building floppy disk images or hard disk images is possible with the _buildboot.c_ utility. There are two versions: big-endian order (1997), and little-endian order (1999).
+Building floppy disk images or hard disk images is possible with the _buildboot.c_ utility. There are two possibilities: big-endian order (1997) using the -v1 argument, and little-endian order (1999) using the -v2 argument. Notice you need to provide attribute bytes so the operating system can "know" it can execute a file (-a1) all other attribute bytes are only ornaments for getting a nice icon in the file folder display.
 
-To extract back files created inside the operating system, I've provided the _extractimage.c_ utility.
+To extract back files created inside the operating system, I've provided the _extractimage.c_ utility. Currently this works only for the little-endian order images. It also loses all the attribute bytes.
 
 ## Using it (1997 version)
 

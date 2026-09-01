@@ -2,5 +2,7 @@
 *.o
 SDL2.framework/*
 bin2c
+buildboot
+extractimage
 rom2int
 

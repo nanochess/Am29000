@@ -34,6 +34,12 @@ I've prepared two precompiled releases for Windows and macOS 15 and higher. You 
 
 The Javascript release can be found in the _js_ directory.
 
+## Filesystem
+
+Building floppy disk images or hard disk images is possible with the _buildboot.c_ utility. There are two versions: big-endian order (1997), and little-endian order (1999).
+
+To extract back files created inside the operating system, I've provided the _extractimage.c_ utility.
+
 ## Using it (1997 version)
 
 If everything goes right, you should see a blue screen, and then drag&drop the _disk.img_ file I've provided into the window. The operating system should boot up immediately, I didn't add delays for disk access.

@@ -206,10 +206,10 @@ void trap(int number)
  ** manual.
  */
 char *special_regs[] = {
-    "VAB", "OPS", "CPS", "CFG", "CHA", "CHD", "CHC", "RBP",
-    "TMC", "TMR", "PC0", "PC1", "PC2", "MMU", "LRU", "RSN",
-    "RMA0", "RMC0", "RMA1", "RMC1", "SPC0", "SPC1", "SPC2", "IBA0",
-    "IBC0", "IBA1", "IBC1", "?", "?", "?", "?", "?",
+    "vab", "ops", "cps", "cfg", "cha", "chd", "chc", "rbp",
+    "tmc", "tmr", "pc0", "pc1", "pc2", "mmu", "lru", "rsn",
+    "rma0", "rmc0", "rma1", "rmc1", "spc0", "spc1", "spc2", "iba0",
+    "ibc0", "iba1", "ibc1", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
@@ -222,11 +222,11 @@ char *special_regs[] = {
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
-    "IPC", "IPA", "IPB", "Q", "ALU", "BP", "FC", "CR",
+    "ipc", "ipa", "ipb", "q", "alu", "bp", "fc", "cr",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
-    "FPE", "INTE", "FPS", "?", "EXOP", "?", "?", "?",
+    "fpe", "inte", "fps", "?", "exop", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
@@ -364,6 +364,9 @@ struct dns_record {
     uint32_t ip;
 } dns[MAX_DNS];
 
+/*
+ ** Read DNS cache
+ */
 uint32_t dns_read_cache(char *hostname)
 {
     struct dns_record temp;
@@ -382,6 +385,9 @@ uint32_t dns_read_cache(char *hostname)
     return 0;
 }
 
+/*
+ ** Write DNS cache
+ */
 void dns_write_cache(char *hostname, uint32_t ip)
 {
     int d;

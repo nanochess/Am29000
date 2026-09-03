@@ -34,6 +34,8 @@ I've prepared two precompiled releases for Windows and macOS 15 and higher. You 
 
 The Javascript release can be found in the _js_ directory.
 
+Currently these releases emulate only the Am29000 processor. In the C version you can enable a preliminary Am29050 processor for a significant speed up when running my OS (see _am29000.h_ for the compilation option), as it has multiplication instructions and floating-point support (both single and double precision).
+
 ## Filesystem
 
 Building floppy disk images or hard disk images is possible with the _buildboot.c_ utility. There are two possibilities: big-endian order (1997) using the -v1 argument, and little-endian order (1999) using the -v2 argument. Notice you need to provide attribute bytes so the operating system can "know" it can execute a file (-a1) all other attribute bytes are only ornaments for getting a nice icon in the file folder display.

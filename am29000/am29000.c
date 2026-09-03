@@ -8,6 +8,8 @@
  ** Revision date: Aug/03/2026. Added endianness change support.
  ** Revision date: Aug/13/2026. Solved bug in LOADM/STOREM when going from global
  **                             register to local register.
+ ** Revision date: Sep/02/2026. Added support for Am29050 multiplication and
+ **                             floating point instructions.
  */
 
 #ifdef _WIN32
@@ -33,6 +35,10 @@
 #include "am29000.h"
 #include "clgd5429.h"
 #include "clgd5440.h"
+
+#if AM29050
+#include <math.h>
+#endif
 
 /*
  ** Am29000 manual from https://archive.org/details/bitsavers_amdAm29000ual_16568459
@@ -67,11 +73,23 @@
  ** o Channel registers.
  ** o Interruptable LOADM/STOREM (and registers CHA, CHD, and CHC)
  ** o Register protection (RBP register)
+ **
+ ** Not implemented for a complete Am29050 processor:
+ ** o CLASS instruction (still processed through emulation)
+ ** o Rounding modes for CONVERT instruction.
+ ** o FMAC, DMAC, FMSM, DMSM, MTACC, and MFACC instructions (plus four accumulator registers)
+ ** o FDMUL.
+ ** o Registers gr2 and gr3 (Condition Code accumulators)
+ ** o Special registers rsn, rma0, rmc0, rma1, rmc1, spc0, spc1, and spc2.
+ ** o Breakpoint registers iba0, ibc0, iba1, ibc1.
+ ** o Environment and status registers fpe, inte, fps.
+ ** o Exception opcode exop.
  */
 
 /*
  ** I should have defined macros for accesing these registers,
- ** here is a handy reference for access to special[] array.
+ ** here is a handy reference for access to special[] array
+ ** (Am29000 manual)
  **
  ** Page 62:
  ** Vector Area Base Address (register 0)
@@ -398,6 +416,54 @@ void dns_write_cache(char *hostname, uint32_t ip)
     dns[0].ip = ip;
 }
 
+#if AM29050
+/*
+ ** Floating-point support for Am29050
+ */
+float reg2float(uint32_t reg)
+{
+    union {
+        uint32_t integer;
+        float f;
+    } v;
+    v.integer = reg;
+    return v.f;
+}
+
+uint32_t float2reg(float reg)
+{
+    union {
+        uint32_t integer;
+        float f;
+    } v;
+    v.f = reg;
+    return v.integer;
+}
+
+double reg2double(uint32_t reg1, uint32_t reg2)
+{
+    union {
+        uint32_t integer[2];
+        double d;
+    } v;
+    v.integer[1] = reg1;    /* It will work only in little-endian machines */
+    v.integer[0] = reg2;
+    return v.d;
+}
+
+void double2reg(double reg, uint32_t *reg1, uint32_t *reg2)
+{
+    union {
+        uint32_t integer[2];
+        double d;
+    } v;
+
+    v.d = reg;
+    *reg1 = v.integer[1];   /* It will work only in little-endian machines */
+    *reg2 = v.integer[0];
+}
+#endif
+
 /*
 ** Emulate one instruction
 */
@@ -411,6 +477,8 @@ void am29000_emulate(void)
     uint64_t shift;
     uint8_t buffer[4];
     char string[256];
+    float fa, fb, fc;
+    double da, db, dc;
 
     /* Detect free block number */
     /*            if (prev_value != read_word(0x8003b48c)) {
@@ -787,13 +855,13 @@ void am29000_emulate(void)
                     }
                     break;
                 case 0x04:
-/*                    if (REG_B == 0x80037ca8) {
-                        fprintf(stderr, "Watching address 0x%08x now written with 0x%08x\n", REG_B, REG_A);
-                        if (REG_A == 0xffffffffU) {
-                            debug_info();
-                            exit(1);
-                        }
-                    }*/
+                    /*                    if (REG_B == 0x80037ca8) {
+                     fprintf(stderr, "Watching address 0x%08x now written with 0x%08x\n", REG_B, REG_A);
+                     if (REG_A == 0xffffffffU) {
+                     debug_info();
+                     exit(1);
+                     }
+                     }*/
                     write_word(REG_B, REG_A);
                     break;
                 case 0x41:
@@ -1800,39 +1868,321 @@ void am29000_emulate(void)
             special[130] = REG_BA(_RB) * 4;
             trap((instruction >> 16) & 0xff);
             break;
-        case 0xde:  /* MULTM */
-        case 0xdf:  /* MULTMU */
         case 0xe0:  /* MULTIPLY */
-        case 0xe1:  /* DIVIDE */
+#if AM29050
+            e = REG_A;
+            f = REG_B;
+            shift = (int64_t) e * (int64_t) f;
+            REG_C = (uint32_t) shift;
+            break;
+#endif
         case 0xe2:  /* MULTIPLU */
-        case 0xe3:  /* DIVIDU */
+#if AM29050
+            c = REG_A;
+            d = REG_B;
+            shift = (uint64_t) c * (uint64_t) d;
+            REG_C = (uint32_t) shift;
+            break;
+#endif
+        case 0xde:  /* MULTM */
+#if AM29050
+            e = REG_A;
+            f = REG_B;
+            shift = (int64_t) e * (int64_t) f;
+            REG_C = (uint32_t) (shift >> 32);
+            break;
+#endif
+        case 0xdf:  /* MULTMU */
+#if AM29050
+            c = REG_A;
+            d = REG_B;
+            shift = (uint64_t) c * (uint64_t) d;
+            REG_C = (uint32_t) (shift >> 32);
+            break;
+#endif
+        case 0xea:  /* FEQ */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            REG_C = (fa == fb) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xeb:  /* DEQ */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            REG_C = (da == db) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xec:  /* FGT */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            REG_C = (fa > fb) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xed:  /* DGT */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            REG_C = (da > db) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xee:  /* FGE */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            REG_C = (fa >= fb) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xef:  /* DGE */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            REG_C = (da >= db) ? AM29K_TRUE : AM29K_FALSE;
+            break;
+#endif
+        case 0xf0:  /* FADD */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            fc = fa + fb;
+            REG_C = float2reg(fc);
+            break;
+#endif
+        case 0xf2:  /* FSUB */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            fc = fa - fb;
+            REG_C = float2reg(fc);
+            break;
+#endif
+        case 0xf4:  /* FMUL */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            fc = fa * fb;
+            REG_C = float2reg(fc);
+            break;
+#endif
+        case 0xf6:  /* FDIV */
+#if AM29050
+            fa = reg2float(REG_A);
+            fb = reg2float(REG_B);
+            fc = fa / fb;
+            REG_C = float2reg(fc);
+            break;
+#endif
+        case 0xf1:  /* DADD */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            dc = da + db;
+            c = REG_CA(_RC);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            double2reg(dc, &regs[c], &regs[d]);
+            break;
+#endif
+        case 0xf3:  /* DSUB */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            dc = da - db;
+            c = REG_CA(_RC);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            double2reg(dc, &regs[c], &regs[d]);
+            break;
+#endif
+        case 0xf5:  /* DMUL */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            dc = da * db;
+            c = REG_CA(_RC);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            double2reg(dc, &regs[c], &regs[d]);
+            break;
+#endif
+        case 0xf7:  /* DDIV */
+#if AM29050
+            c = REG_AA(_RA);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            da = reg2double(regs[c], regs[d]);
+            c = REG_BA(_RB);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            db = reg2double(regs[c], regs[d]);
+            dc = da / db;
+            c = REG_CA(_RC);
+            d = c + 1;
+            if (d == 256)
+                d = 128;
+            double2reg(dc, &regs[c], &regs[d]);
+            break;
+#endif
         case 0xe4:  /* CONVERT */
+#if AM29050
+            if ((instruction & 0x03) == 0) {    /* Integer... */
+                if ((instruction & 0x0c) == 4) { /* To float */
+                    if ((instruction & 0x80) == 0) {    /* Signed */
+                        e = REG_A;
+                        fc = e;
+                    } else {
+                        c = REG_A;
+                        fc = c;
+                    }
+                    REG_C = float2reg(fc);
+                } else if ((instruction & 0x0c) == 8) { /* To double */
+                    if ((instruction & 0x80) == 0) {    /* Signed */
+                        e = REG_A;
+                        dc = e;
+                    } else {
+                        c = REG_A;
+                        dc = c;
+                    }
+                    c = REG_CA(_RC);
+                    d = c + 1;
+                    if (d == 256)
+                        d = 128;
+                    double2reg(dc, &regs[c], &regs[d]);
+                }
+            } else if ((instruction & 0x03) == 1) { /* Float... */
+                if ((instruction & 0x0c) == 0) {    /* To integer */
+                    fa = reg2float(REG_A);
+                    /* !!! Round mode */
+                    if ((instruction & 0x80) == 0) {  /* Signed */
+                        e = fa;
+                        REG_C = e;
+                    } else {
+                        c = fa;
+                        REG_C = c;
+                    }
+                } else if ((instruction & 0x0c) == 8) { /* To double */
+                    dc = reg2float(REG_A);
+                    c = REG_CA(_RC);
+                    d = c + 1;
+                    if (d == 256)
+                        d = 128;
+                    double2reg(dc, &regs[c], &regs[d]);
+                }
+            } else if ((instruction & 0x03) == 2) { /* Double... */
+                if ((instruction & 0x0c) == 0) {    /* To integer */
+                    c = REG_AA(_RA);
+                    d = c + 1;
+                    if (d == 256)
+                        d = 128;
+                    dc = reg2double(regs[c], regs[d]);
+                    /* !!! Round mode */
+                    if ((instruction & 0x80) == 0) {  /* Signed */
+                        e = dc;
+                        REG_C = e;
+                    } else {
+                        c = dc;
+                        REG_C = c;
+                    }
+                } else if ((instruction & 0x0c) == 4) { /* To float */
+                    c = REG_AA(_RA);
+                    d = c + 1;
+                    if (d == 256)
+                        d = 128;
+                    fc = reg2double(regs[c], regs[d]);
+                    REG_C = float2reg(fc);
+                }
+            }
+            break;
+#endif
         case 0xe5:  /* SQRT */
+#if AM29050
+            if ((instruction & 0x03) == 1) {
+                fa = reg2float(REG_A);
+                fc = sqrt(fa);
+                REG_C = float2reg(fc);
+            } else if ((instruction & 0x03) == 2) {
+                c = REG_AA(_RA);
+                d = c + 1;
+                if (d == 256)
+                    d = 128;
+                da = reg2double(regs[c], regs[d]);
+                dc = sqrt(da);
+                c = REG_CA(_RC);
+                d = c + 1;
+                if (d == 256)
+                    d = 128;
+                double2reg(dc, &regs[c], &regs[d]);
+            }
+            break;
+#endif
+        case 0xe1:  /* DIVIDE */
+        case 0xe3:  /* DIVIDU */
         case 0xe6:  /* CLASS */
         case 0xe8:  /* MTACC */
         case 0xe9:  /* MFACC */
-        case 0xea:  /* FEQ */
-        case 0xeb:  /* DEQ */
-        case 0xec:  /* FGT */
-        case 0xed:  /* DGT */
-        case 0xee:  /* FLT */
-        case 0xef:  /* DLT */
-        case 0xf0:  /* FADD */
-        case 0xf1:  /* DADD */
-        case 0xf2:  /* FSUB */
-        case 0xf3:  /* DSUB */
-        case 0xf4:  /* FMUL */
-        case 0xf5:  /* DMUL */
-        case 0xf6:  /* FDIV */
-        case 0xf7:  /* DDIV */
-            /*                fprintf(stderr, "%08x%08x\n", regs[REG_AA(_RA)], regs[REG_AA(_RA) + 1]);*/
-            /*                fprintf(stderr, "%08x%08x * %08x%08x\n", regs[REG_AA(_RA)], regs[REG_AA(_RA) + 1], regs[REG_BA(_RB)], regs[REG_BA(_RB) + 1]);*/
+        case 0xf9:  /* FDMUL */
             special[128] = REG_CA(_RC) * 4;
             special[129] = REG_AA(_RA) * 4;
             special[130] = REG_BA(_RB) * 4;
-            /*                fprintf(stderr, "INDC:0x%08x INDA:0x%08x INDB:0x%08x\n", special[128], special[129], special[130]);*/
+#if AM29050
+            special[164] = (instruction >> 24) & 0xff;  /* EXOP */
+#endif
             trap((instruction >> 24) & 0x3f);
-            /*                fprintf(stderr, "Calling trap...\n");*/
             break;
         case 0xfc:  /* Services */
             switch ((instruction >> 8) & 0xff) {

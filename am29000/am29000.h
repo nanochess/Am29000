@@ -8,6 +8,26 @@
  ** Revision date: Aug/12/2026. Added ROM_SIZE, ROM_MASK, RAM_SIZE, and RAM_MASK.
  */
 
+/*
+ ** The Am29000 processor has two buses: instructions and data.
+ **
+ ** The instruction access is done in the instruction bus,
+ ** and all of the LOAD/STORE data happens in the data bus.
+ **
+ ** However, you could join together both buses with a data
+ ** bridge, so using LOAD/STORE you can access instruction
+ ** memory in order to load programs into memory.
+ **
+ ** From a hardware point of view, it is important. From the
+ ** emulator side, it is pretty simple, the instruction access
+ ** uses the same code as the data access.
+ */
+
+/*
+ ** Select the emulator target (Am29000 or Am29050)
+ */
+#define AM29050     0
+
 #define ROM_SIZE    1048576
 #define ROM_MASK    (ROM_SIZE - 1)
 

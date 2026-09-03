@@ -1,4 +1,4 @@
-# G11 computer emulator (Am29000)
+# G11 computer emulator (Am29000/Am29050)
 
 ### by Oscar Toledo G. [https://nanochess.org/](https://nanochess.org/)
 

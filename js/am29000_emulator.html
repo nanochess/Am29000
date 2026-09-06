@@ -7,6 +7,7 @@
         <div id="terminal"><canvas id="canvas" width="800" height="600" style="cursor:none;"></canvas> </div>
         <script>
             // Aug/06/2026. First working version.
+            // Sep/06/2026. Added 1999 OS.
             
             //
             // Add a key to buffer
@@ -200,6 +201,7 @@
                 mode = document.getElementById("emulator").selectedIndex;
                 if (mode == 0)
                     return;
+                document.getElementById("emulator").disabled = true;
                 mode--;
                 if (mode >= 1)
                     clgd5440 = new clgd5440(document.getElementById("canvas"));

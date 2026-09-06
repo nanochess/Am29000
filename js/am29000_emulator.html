@@ -197,6 +197,12 @@
         <script src="am29000_emulator.js"></script>
         <script>
             document.getElementById("emulator").disabled = false;
+
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#2040a0";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
             function start_emulator() {
                 mode = document.getElementById("emulator").selectedIndex;
                 if (mode == 0)

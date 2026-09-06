@@ -477,9 +477,11 @@ void am29000_emulate(void)
     uint64_t shift;
     uint8_t buffer[4];
     char string[256];
+#if AM29050
     float fa, fb, fc;
     double da, db, dc;
-
+#endif
+    
     /* Detect free block number */
     /*            if (prev_value != read_word(0x8003b48c)) {
      prev_value = read_word(0x8003b48c);

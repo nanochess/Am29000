@@ -1,8 +1,7 @@
 //
 // Am29000 emulator
 //
-// by Oscar Toledo G.
-// All rights reserved.
+// (c) Copyright 2026 Oscar Toledo G. All rights reserved.
 // https://nanochess.org/
 //
 // Redistribution and use in source and binary forms, with or without
@@ -41,7 +40,7 @@ const debug = 0;
 var current_instruction = 0;
 var last_instruction = new Array(1024);
 
-var rom = new Uint32Array(131072 / 4);
+var rom = new Uint32Array(1048576 / 4);
 var memory = new Uint32Array(524288 / 4);
 var regs = new Uint32Array(256);
 var special = new Uint32Array(256);
@@ -54,6 +53,7 @@ var pc2;
 
 var count = 0;
 var endianness;
+var mode = 1;
 
 var first_time = 1;
 
@@ -101,7 +101,7 @@ function debug_info()
 // Read a word.
 function read_word(addr)
 {
-    return (addr & 0x80000000) ? memory[(addr >> 2) & 0x1ffff] : rom[(addr >> 2) & 0x7fff];
+    return (addr & 0x80000000) ? memory[(addr >> 2) & 0x1ffff] : rom[(addr >> 2) & 0x3ffff];
 }
 
 // Write a word.
@@ -149,23 +149,11 @@ var lz = [
 
 // Floppy disk drives
  
-var floppy1 = new Uint8Array(80 * 18432);
+var floppy1;
 
-disk_image = window.atob(disk_image);
+var floppy2;
 
-for (c = 0; c < disk_image.length; c++)
-    floppy1[c] = disk_image.charCodeAt(c);
-for (; c < 80 * 18432; c++)
-    floppy1[c] = 0xfc;
-
-var floppy2 = new Uint8Array(80 * 18432);
-
-empty_disk_image = window.atob(empty_disk_image);
-
-for (c = 0; c < empty_disk_image.length; c++)
-    floppy2[c] = empty_disk_image.charCodeAt(c);
-for (; c < 80 * 18432; c++)
-    floppy2[c] = 0xfc;
+var total_sectors;
 
 var drive_info = [
     0x00, 0x80, 0x02, 0x02, 0x20, 0x00, 0x00, 0x00,
@@ -185,21 +173,29 @@ function read_isa(port)
     var c;
     var isa_port;
     
-    if (port == 0x80) { // Crystal CS4280 if I remember right 
+    if ((port & 0x80000000) != 0 && mode == 1) {
+        c = clgd5440.pci_io_read_byte(port & 0xffff);
+        c = (c & 0xff) << ((port & 3) * 8); // Truly hideous code, put byte in the correct place in the bus
+        return c;
+    }
+    if (port == 0x80) { // Crystal CS4280 if I remember right
         return 0x00;
     }
     if (port == 0x84) {
         isa_value ^= 0x20;
         return isa_value;
     }
-    if (port == 0x90) {   // I forgot why this is done XD 
+    if (port == 0x90) {   // WD33C93 status
         return 0x80;
     }
-    if (port == 0x94) {
-        return 0x42;    // No idea 
+    if (port == 0x94) { // WD33C93 data
+        return 0x42;
     }
-    if (port == 0xf4) { // Keyboard status 
+    if (port == 0xf0) { // Keyboard data
         return 0x00;
+    }
+    if (port == 0xf4) { // Keyboard status
+        return 0x01;
     }
     isa_port = port / 4;
     if (isa_port == 0x3f4 || isa_port == 0x3f5)   // FDC port 0x3f4 / 0x3f5 
@@ -231,6 +227,11 @@ function read_isa(port)
     if (isa_port >= 0x0278 && isa_port <= 0x027b) { // LPT3 
         return 0;
     }
+    if ((isa_port & 0x0303) == 0x0203 || isa_port == 0x0303) {    // Plug&Play
+        return 0xff;
+    }
+    if (isa_port == 0x0300) // Probably Plug&Play
+        return 0xff;
     c = clgd5429.io_read_byte(isa_port);
     if (c == -1) {
         throw "Unhandled port read 0x" + isa_port.toString(16) + "\n";
@@ -244,8 +245,12 @@ function write_isaw(port, data)
     var isa_port;
     var c;
     
-    isa_port = port / 4;
-    c = clgd5429.io_write_word(isa_port, data & 0xffff);
+    if ((port & 0x80000000) != 0 && mode == 1) {
+        c = clgd5440.pci_io_write_word(port & 0xffff, data);
+    } else {
+        isa_port = port / 4;
+        c = clgd5429.io_write_word(isa_port, data & 0xffff);
+    }
     if (c == -1) {
         throw "Unhandled port write 0x" + isa_port.toString(16) + "\n";
     }
@@ -257,56 +262,67 @@ function write_isa(port, data)
     var isa_port;
     var c;
     
-    if (port == 0x0080 || port == 0x0084 || port == 0x0088) {
-        // Ignore 
-        return;
-    }
-    if (port == 0x0090 || port == 0x0094) {
-        // Ignore 
-        return;
-    }
-    if (port == 0xf0) { // Keyboard write 
-        // !!! Ignore 0xed, 0x07, 0xf4 turn keyboard leds on 
-        return;
-    }
-    if (port == 0x0000) {
-        // Ignore 
-        return;
-    }
-    isa_port = port / 4;
-    if (isa_port == 0x03f4 || isa_port == 0x03f5) {   // FDC port 0x3f4 / 0x3f5
-        throw "Unpatched floppy disk\n";
-    }
-    if (isa_port >= 0x03f8 && isa_port <= 0x03ff) { // COM1 
-        return;
-    }
-    if (isa_port >= 0x02f8 && isa_port <= 0x02ff) { // COM2 
-        return;
-    }
-    if (isa_port >= 0x03e8 && isa_port <= 0x03ef) { // COM3 
-        return;
-    }
-    if (isa_port >= 0x02e8 && isa_port <= 0x02ef) { // COM4 
-        return;
-    }
-    if (isa_port >= 0x03bc && isa_port <= 0x03bf) { // LPT1 
-        if (isa_port == 0x03bc)
-            lpt1_data = data & 0xff;
-        if (isa_port == 0x03be) {
-            if ((lpt1_strobe & 1) != 0 && (data & 1) == 0) {
-                // fputc(lpt1_data, printer_file);
-            }
-            lpt1_strobe = data & 0xff;
+    if ((port & 0x80000000) != 0 && mode == 1) {
+        c = clgd5440.pci_io_write_byte(port & 0xffff, data);
+    } else {
+        if (port == 0x0080 || port == 0x0084 || port == 0x0088) {
+            // Ignore
+            return;
         }
-        return;
+        if (port == 0x0090 || port == 0x0094) {
+            // Ignore
+            return;
+        }
+        if (port == 0xf0) { // Keyboard write
+            // !!! Ignore 0xed, 0x07, 0xf4 turn keyboard leds on
+            return;
+        }
+        if (port == 0x0000) {
+            // Ignore
+            return;
+        }
+        isa_port = port / 4;
+        if (isa_port == 0x0a79) {   // Plug&Play ISA
+            // Ignore
+            return;
+        }
+        if (isa_port == 0x03f4 || isa_port == 0x03f5) {   // FDC port 0x3f4 / 0x3f5
+            throw "Unpatched floppy disk\n";
+        }
+        if (isa_port >= 0x03f8 && isa_port <= 0x03ff) { // COM1
+            return;
+        }
+        if (isa_port >= 0x02f8 && isa_port <= 0x02ff) { // COM2
+            return;
+        }
+        if (isa_port >= 0x03e8 && isa_port <= 0x03ef) { // COM3
+            return;
+        }
+        if (isa_port >= 0x02e8 && isa_port <= 0x02ef) { // COM4
+            return;
+        }
+        if (isa_port >= 0x03bc && isa_port <= 0x03bf) { // LPT1
+            if (isa_port == 0x03bc)
+                lpt1_data = data & 0xff;
+            if (isa_port == 0x03be) {
+                if ((lpt1_strobe & 1) != 0 && (data & 1) == 0) {
+                    // fputc(lpt1_data, printer_file);
+                }
+                lpt1_strobe = data & 0xff;
+            }
+            return;
+        }
+        if (isa_port >= 0x0378 && isa_port <= 0x037b) { // LPT2
+            return;
+        }
+        if (isa_port >= 0x0278 && isa_port <= 0x027b) { // LPT3
+            return;
+        }
+        if (isa_port == 0x0300 || isa_port == 0x0302 || isa_port == 0x0303) { // Probably Plug&Play
+            return;
+        }
+        c = clgd5429.io_write_byte(isa_port, data & 0xff);
     }
-    if (isa_port >= 0x0378 && isa_port <= 0x037b) { // LPT2 
-        return;
-    }
-    if (isa_port >= 0x0278 && isa_port <= 0x027b) { // LPT3 
-        return;
-    }
-    c = clgd5429.io_write_byte(isa_port, data & 0xff);
     if (c == -1) {
         throw "Unhandled port write 0x" + isa_port.toString(16) + "\n";
     }
@@ -322,13 +338,26 @@ function floppy_scsi(unit, subunit, command, command_length, data, data_length)
     var count;
     
     console.debug("floppy_scsi: executing command 0x" + read_byte(command).toString(16) + "\n");
+    if (mode == 1) {
+        if (unit != 0xfffffffe && unit != 0x00000000) {
+            regs[96] = 0x00420000;    // Unit doesn't exist
+            regs[97] = 0;
+            return;
+        }
+    }
     switch (read_byte(command)) {
         case 0x1a:    // Mode sense 
             write_byte(data, 0x0b);
-            write_byte(data + 1, 0x81);    // Medium type 
+            if (unit == 0)
+                write_byte(data + 1, 0x00);    // Non-removable disk
+            else
+                write_byte(data + 1, 0x81);    // Medium type
             write_byte(data + 2, 0);  // 0x80 = WP Write Protected 
             write_byte(data + 3, 8);
-            c = 0x0b40;    // Total blocks 
+            if (unit == 0)
+                c = total_sectors;
+            else
+                c = 0x0b40;    // Total blocks
             write_byte(data + 4, c >> 24);
             write_byte(data + 5, c >> 16);
             write_byte(data + 6, c >> 8);
@@ -341,8 +370,11 @@ function floppy_scsi(unit, subunit, command, command_length, data, data_length)
             regs[96] = 0;    // All good 
             regs[97] = 12;    // 12 bytes returned 
             break;
-        case 0x25:    // Read Capacity 
-            c = 0x0b3f;    // Maximum block number 
+        case 0x25:    // Read Capacity
+            if (unit == 0)
+                c = total_sectors - 1;
+            else
+                c = 0x0b3f;    // Maximum block number
             write_byte(data, c >> 24);
             write_byte(data + 1, c >> 16);
             write_byte(data + 2, c >> 8);
@@ -392,13 +424,13 @@ function floppy_scsi(unit, subunit, command, command_length, data, data_length)
             regs[96] = 0;    // All good 
             regs[97] = 18;    // 18 bytes returned 
             break;
-        case 0x28:    // Read (10) 
-            sector = (read_byte(command + 4) << 8) | read_byte(command + 5);
+        case 0x28:    // Read (10)
+            sector = (read_byte(command + 3) << 16) | (read_byte(command + 4) << 8) | read_byte(command + 5);
             total = (read_byte(command + 7) << 8) | read_byte(command + 8);
             console.debug("Reading sector " + sector + ", length " + total + " (addr=0x" + data.toString(16) + ")\n");
             for (count = 0; count < total; count++) {
                 pos = sector * 512;
-                if (unit == (0xfffffffe >>> 0)) {
+                if (unit == (mode == 1 ? 0x00000000 : 0xfffffffe)) {
                     for (c = 0; c < 512; c++) {
                         write_byte(data, floppy1[pos + c]);
                         data++;
@@ -415,12 +447,12 @@ function floppy_scsi(unit, subunit, command, command_length, data, data_length)
             regs[97] = total * 512;
             break;
         case 0x2a:    // Write (10) 
-            sector = (read_byte(command + 4) << 8) | read_byte(command + 5);
+            sector = (read_byte(command + 3) << 16) | (read_byte(command + 4) << 8) | read_byte(command + 5);
             total = (read_byte(command + 7) << 8) | read_byte(command + 8);
             console.debug("Writing sector " + sector + ", length " + total + " (addr=0x" + data.toString(16) + ")\n");
             for (count = 0; count < total; count++) {
                 pos = sector * 512;
-                if (unit == (0xfffffffe >>> 0)) {
+                if (unit == (mode == 1 ? 0x00000000 : 0xfffffffe)) {
                     for (c = 0; c < 512; c++) {
                         floppy1[pos + c] = read_byte(data);
                         data++;
@@ -448,49 +480,113 @@ function am29000() {
     var d;
     var instruction;
     
-    for (c = 0; c < rom.length; c++) {
-        rom[c] = 0xffffffff >> 0;
-    }
-    for (c = 0; c < rom.length; c++) {
-        memory[c] = 0xffffffff >> 0;
-    }
-    
-    // Load boot code
-    d = 0xbfff0000 >>> 0;
-    for (c = 0; c < 9216; c += 4) {
-        instruction = ((floppy1[c] << 24) | (floppy1[c + 1] << 16) | (floppy1[c + 2] << 8) | floppy1[c + 3]) >>> 0;
-        write_word(d, instruction);
-        d = (d + 4) >>> 0;
-    }
-    pc1 = 0xbfff0000 >>> 0;
-    pc0 = (pc1 + 4) >>> 0;
-    endianness = 3;
-    for (c = 0; c < 256; c++)
-        special[c] = 0;
-    for (c = 0; c < 256; c++)
-        regs[c] = 0;
-    write_word(0xbfffffd8, 0x00000200); // 512 kilobytes of RAM
-    write_word(0xbfffffdc, 0x40); // Boot drive (0x40 for A, 0-7 for C-I)
-    write_word(0xbfffffe0, 12); // 12 mhz ???
-    // Patch RAM with boot loader services
-    write_word(0xbfffffec, 0x00002000);
-    
-    // Text drawing routine, gr64=x, gr65=y, gr66=text
-    rom[0x00002018 / 4] = 0xc0000080;   // JMPI lr0
-    rom[0x0000201c / 4] = 0x70406161;   // NOP
-    // Read disk, gr111=track and head, gr113=target address, gr77=bytes
-    rom[0x00002020 / 4] = 0xfc000180 >>> 0;   // Use a non-implemented instruction
-    rom[0x00002024 / 4] = 0x70406161;   // NOP
-    // Box drawing routine, gr64=x, gr65=y, gr66=w, gr67=h, gr68=title
-    rom[0x00002050 / 4] = 0xc0000080;   // JMPI lr0
-    rom[0x00002054 / 4] = 0x70406161;   // NOP
-    // Icon drawing routine, gr64=x, gr65=y, gr66=icon
-    rom[0x00002058 / 4] = 0xc0000080 >>> 0;   // JMPI lr0
-    rom[0x0000205c / 4] = 0x70406161;   // NOP
-    // Text drawing routine, gr64=x, gr65=y, gr66=text
-    rom[0x00002078 / 4] = 0xc0000080;   // JMPI lr0
-    rom[0x0000207c / 4] = 0x70406161;   // NOP
+    if (mode == 1) {
+        total_sectors = 40 * 1048576 / 512;
+        floppy1 = new Uint8Array(40 * 1048576);
 
+        harddisk_image = window.atob(harddisk_image);
+
+        for (c = 0; c < harddisk_image.length; c++)
+            floppy1[c] = harddisk_image.charCodeAt(c);
+        for (; c < 40 * 1048576; c++)
+            floppy1[c] = 0xfc;
+
+        floppy2 = new Uint8Array(80 * 18432);
+
+        floppy_image = window.atob(floppy_image);
+
+        for (c = 0; c < floppy_image.length; c++)
+            floppy2[c] = floppy_image.charCodeAt(c);
+        for (; c < 80 * 18432; c++)
+            floppy2[c] = 0xfc;
+
+        for (c = 0; c < rom_1999.length; c++) {
+            rom[c] = rom_1999[c] >>> 0;
+        }
+        for (c = 0; c < memory.length; c++) {
+            memory[c] = 0x00000000 >>> 0;
+        }
+        if (0) {
+            pc1 = 0x00040020;
+            rom[0x00040028 / 4] = 0x70406161;
+        } else {
+            pc1 = 0x00040000;
+        }
+        pc0 = pc1 + 4;
+        endianness = 0;
+        special[3] = 0x00000004;
+        write_word(0xbfffffd8, 0x00000200); // 512 kilobytes of RAM
+        write_word(0xbfffffdc, 0x00); // Boot drive (0x40 for A, 0-7 for C-I)
+        write_word(0xbfffffe0, 12); // 12 mhz ???
+        // Avoid traps in emulation code
+        rom[0x000400b0 / 4] = 0x03005f40;   // CONST gr95,0x0040
+        rom[0x000400b4 / 4] = 0x02005f04;   // CONSTH gr95,0x0004
+        // Patch the SCSI routine
+        rom[0x0004a008 / 4] = 0xfc000280;   // Call the emulator
+        rom[0x0004a848 / 4] = 0x03006001;   // Initialization successful
+
+    } else {
+        floppy1 = new Uint8Array(80 * 18432);
+
+        disk_image = window.atob(disk_image);
+
+        for (c = 0; c < disk_image.length; c++)
+            floppy1[c] = disk_image.charCodeAt(c);
+        for (; c < 80 * 18432; c++)
+            floppy1[c] = 0xfc;
+
+        floppy2 = new Uint8Array(80 * 18432);
+
+        empty_disk_image = window.atob(empty_disk_image);
+
+        for (c = 0; c < empty_disk_image.length; c++)
+            floppy2[c] = empty_disk_image.charCodeAt(c);
+        for (; c < 80 * 18432; c++)
+            floppy2[c] = 0xfc;
+
+        for (c = 0; c < rom.length; c++) {
+            rom[c] = 0xffffffff >> 0;
+        }
+        for (c = 0; c < memory.length; c++) {
+            memory[c] = 0xffffffff >> 0;
+        }
+        
+        // Load boot code
+        d = 0xbfff0000 >>> 0;
+        for (c = 0; c < 9216; c += 4) {
+            instruction = ((floppy1[c] << 24) | (floppy1[c + 1] << 16) | (floppy1[c + 2] << 8) | floppy1[c + 3]) >>> 0;
+            write_word(d, instruction);
+            d = (d + 4) >>> 0;
+        }
+        pc1 = 0xbfff0000 >>> 0;
+        pc0 = (pc1 + 4) >>> 0;
+        endianness = 3;
+        for (c = 0; c < 256; c++)
+            special[c] = 0;
+        for (c = 0; c < 256; c++)
+            regs[c] = 0;
+        write_word(0xbfffffd8, 0x00000200); // 512 kilobytes of RAM
+        write_word(0xbfffffdc, 0x40); // Boot drive (0x40 for A, 0-7 for C-I)
+        write_word(0xbfffffe0, 12); // 12 mhz ???
+        // Patch RAM with boot loader services
+        write_word(0xbfffffec, 0x00002000);
+        
+        // Text drawing routine, gr64=x, gr65=y, gr66=text
+        rom[0x00002018 / 4] = 0xc0000080;   // JMPI lr0
+        rom[0x0000201c / 4] = 0x70406161;   // NOP
+        // Read disk, gr111=track and head, gr113=target address, gr77=bytes
+        rom[0x00002020 / 4] = 0xfc000180 >>> 0;   // Use a non-implemented instruction
+        rom[0x00002024 / 4] = 0x70406161;   // NOP
+        // Box drawing routine, gr64=x, gr65=y, gr66=w, gr67=h, gr68=title
+        rom[0x00002050 / 4] = 0xc0000080;   // JMPI lr0
+        rom[0x00002054 / 4] = 0x70406161;   // NOP
+        // Icon drawing routine, gr64=x, gr65=y, gr66=icon
+        rom[0x00002058 / 4] = 0xc0000080 >>> 0;   // JMPI lr0
+        rom[0x0000205c / 4] = 0x70406161;   // NOP
+        // Text drawing routine, gr64=x, gr65=y, gr66=text
+        rom[0x00002078 / 4] = 0xc0000080;   // JMPI lr0
+        rom[0x0000207c / 4] = 0x70406161;   // NOP
+    }
 }
 
 am29000.prototype.AM29K_TRUE = 0x80000000 >>> 0;
@@ -541,10 +637,10 @@ am29000.prototype.trap = function (number)
 // manual.
 //
 var special_regs = [
-    "VAB", "OPS", "CPS", "CFG", "CHA", "CHD", "CHC", "RBP",
-    "TMC", "TMR", "PC0", "PC1", "PC2", "MMU", "LRU", "RSN",
-    "RMA0", "RMC0", "RMA1", "RMC1", "SPC0", "SPC1", "SPC2", "IBA0",
-    "IBC0", "IBA1", "IBC1", "?", "?", "?", "?", "?",
+    "vab", "ops", "cps", "cfg", "cha", "chd", "chc", "rbp",
+    "tmc", "tmr", "pc0", "pc1", "pc2", "mmu", "lru", "rsn",
+    "rma0", "rmc0", "rma1", "rmc1", "spc0", "spc1", "spc2", "iba0",
+    "ibc0", "iba1", "ibc1", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
@@ -557,11 +653,11 @@ var special_regs = [
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
-    "IPC", "IPA", "IPB", "Q", "ALU", "BP", "FC", "CR",
+    "ipc", "ipa", "ipb", "q", "alu", "bp", "fc", "cr",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
-    "FPE", "INTE", "FPS", "?", "EXOP", "?", "?", "?",
+    "fpe", "inte", "fps", "?", "exop", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?",
@@ -958,19 +1054,38 @@ am29000.prototype.start_emulation = function () {
                 regs[this.get_rc(instruction)] = (regs[this.get_ra(instruction)] + (instruction & 0xff)) >>> 0;
                 break;
             case 0x16:  // LOAD
-                switch ((instruction >> 16) & 0xff) {
+                if ((instruction & 0x00100000) != 0) {
+                    c = regs[this.get_rb(instruction)] & 3;
+                    this.write_bp(c);
+                }
+                switch ((instruction >> 16) & 0xef) {
+                    case 0x00:
+                    case 0x20:
+                        if (mode == 1) {
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(regs[this.get_rb(instruction)]) >>> 0;
+                        } else {
+                            throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
+                        }
+                        break;
+                    case 0x01:
+                        if (mode == 1) {
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(regs[this.get_rb(instruction)]) >>> 0;
+                        } else {
+                            throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
+                        }
+                        break;
                     case 0x02:
-                        regs[this.get_ra(instruction)] = clgd5429.mem_read_word(regs[this.get_rb(instruction)] / 4) >>> 0;
+                        if (mode == 1) {
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_word(regs[this.get_rb(instruction)]) >>> 0;
+                        } else {
+                            regs[this.get_ra(instruction)] = clgd5429.mem_read_word(regs[this.get_rb(instruction)] / 4) >>> 0;
+                        }
                         break;
                     case 0x04:
                         regs[this.get_ra(instruction)] = read_word(regs[this.get_rb(instruction)]) >>> 0;
                         break;
-                    case 0x14:
-                        c = regs[this.get_rb(instruction)] & 3;
-                        this.write_bp(c);
-                        regs[this.get_ra(instruction)] = read_word(regs[this.get_rb(instruction)]) >>> 0;
-                        break;
                     case 0x41:
+                    case 0x61:
                         regs[this.get_ra(instruction)] = read_isa(regs[this.get_rb(instruction)]) >>> 0;
                         break;
                     default:
@@ -978,16 +1093,16 @@ am29000.prototype.start_emulation = function () {
                 }
                 break;
             case 0x17:  // LOAD imm
-                switch ((instruction >> 16) & 0xff) {
+                if ((instruction & 0x00100000) != 0) {
+                    c = regs[this.get_rb(instruction)] & 3;
+                    this.write_bp(c);
+                }
+                switch ((instruction >> 16) & 0xef) {
                     case 0x04:
                         regs[this.get_ra(instruction)] = read_word((instruction & 0xff)) >>> 0;
                         break;
-                    case 0x14:
-                        c = regs[this.get_rb(instruction)] & 3;
-                        this.write_bp(c);
-                        regs[this.get_ra(instruction)] = read_word((instruction & 0xff)) >>> 0;
-                        break;
                     case 0x41:
+                    case 0x61:
                         regs[this.get_ra(instruction)] = read_isa((instruction & 0xff)) >>> 0;
                         break;
                     default:
@@ -1029,18 +1144,39 @@ am29000.prototype.start_emulation = function () {
                 regs[this.get_rc(instruction)] = (regs[this.get_ra(instruction)] + (instruction & 0xff) + c) >>> 0;
                 break;
             case 0x1e:  // STORE
-                switch ((instruction >> 16) & 0xff) {
+                if ((instruction & 0x00100000) != 0) {
+                    c = regs[this.get_rb(instruction)] & 3;
+                    this.write_bp(c);
+                }
+                switch ((instruction >> 16) & 0xef) {
                     case 0x00:
+                    case 0x20:
                         c = regs[this.get_rb(instruction)];
                         d = regs[this.get_ra(instruction)];
-                        e = clgd5429.mem_write_byte(c / 4, d & 0xff);
+                        if (mode == 1)
+                            e = clgd5440.pci_mem_write_dword(c, d);
+                        else
+                            e = clgd5429.mem_write_byte(c / 4, d & 0xff);
+                        if (e == -1)
+                            throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
+                        break;
+                    case 0x01:
+                        c = regs[this.get_rb(instruction)];
+                        d = regs[this.get_ra(instruction)];
+                        if (mode == 1)
+                            e = clgd5440.pci_mem_write_byte(c, d);
+                        else
+                            e = -1;
                         if (e == -1)
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         break;
                     case 0x02:
                         c = regs[this.get_rb(instruction)];
                         d = regs[this.get_ra(instruction)];
-                        e = clgd5429.mem_write_word(c / 4, d & 0xffff);
+                        if (mode == 1)
+                            e = clgd5440.pci_mem_write_word(c, d);
+                        else
+                            e = clgd5429.mem_write_word(c / 4, d & 0xffff);
                         if (e == -1)
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         break;
@@ -1048,9 +1184,11 @@ am29000.prototype.start_emulation = function () {
                         write_word(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
                         break;
                     case 0x41:
+                    case 0x61:
                         write_isa(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
                         break;
                     case 0x42:
+                    case 0x62:
                         write_isaw(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
                         break;
                     default:
@@ -1058,11 +1196,16 @@ am29000.prototype.start_emulation = function () {
                 }
                 break;
             case 0x1f:  // STORE
-                switch ((instruction >> 16) & 0xff) {
+                if ((instruction & 0x00100000) != 0) {
+                    c = regs[this.get_rb(instruction)] & 3;
+                    this.write_bp(c);
+                }
+                switch ((instruction >> 16) & 0xef) {
                     case 0x04:
                         write_word((instruction & 0xff), regs[this.get_ra(instruction)]);
                         break;
                     case 0x41:
+                    case 0x61:
                         write_isa((instruction & 0xff), regs[this.get_ra(instruction)]);
                         break;
                     default:
@@ -1179,14 +1322,22 @@ am29000.prototype.start_emulation = function () {
                 switch ((instruction >> 16) & 0xff) {
                     case 0x04:
                         c = regs[this.get_rb(instruction)];
-                        d = this.get_ra(instruction);
+                        d = (instruction >> 8) & 0xff;
+                        if (d == 0)
+                            d = (special[129] >> 2) & 0xff;
+                        else if (d >= 128)
+                            d = ((regs[1] / 4 + d) & 0x7f) | 0x80;
                         while (1) {
                             regs[d] = read_word(c) >>> 0;
-                            c = (c + 4) >>> 0;
-                            if (special[135] == 0)
+                            if ((special[135] & 0xff) == 0)
                                 break;
+                            c = (c + 4) >>> 0;
                             special[135] = (special[135] - 1) & 0xff;
-                            d = (((d + 1) & 0x7f) | (d & 0x80));
+                            ++d;
+                            if (d == 128)
+                                d = ((regs[1] / 4) & 0x7f) | 0x80;
+                            else if (d == 256)
+                                d = 0x80;
                         }
                         break;
                     default:
@@ -1231,14 +1382,22 @@ am29000.prototype.start_emulation = function () {
                 switch ((instruction >> 16) & 0xff) {
                     case 0x04:
                         c = regs[this.get_rb(instruction)];
-                        d = this.get_ra(instruction);
+                        d = (instruction >> 8) & 0xff;
+                        if (d == 0)
+                            d = (special[129] >> 2) & 0xff;
+                        else if (d >= 128)
+                            d = ((regs[1] / 4 + d) & 0x7f) | 0x80;
                         while (1) {
                             write_word(c, regs[d]);
-                            c = (c + 4) >>> 0;
-                            if (special[135] == 0)
+                            if ((special[135] & 0xff) == 0)
                                 break;
+                            c = (c + 4) >>> 0;
                             special[135] = (special[135] - 1) & 0xff;
-                            d = (((d + 1) & 0x7f) | (d & 0x80));
+                            ++d;
+                            if (d == 128)
+                                d = ((regs[1] / 4) & 0x7f) | 0x80;
+                            else if (d == 256)
+                                d = 0x80;
                         }
                         break;
                     default:
@@ -1992,18 +2151,19 @@ am29000.prototype.start_emulation = function () {
                 if (c == 0) {   // VAB
                     if (first_time) {
                         first_time = 0;
-                        
-                        // Patch the floppy disk code
-                        write_word(0x8002086c, 0x4e618260 >>> 0); // Support two drives
-                        write_word(0x80020878, 0xfc000280 >>> 0); // Call the emulator
-                        
-                        // Patch a math emulator strange error
-                        // It makes it to crash with CONVERT gr96,lr4,0,0,2,1 because fraction is non-zero
-                        // Probably the Am29000 was replaced with an Am29050 and I inserted
-                        // more code without testing in the old processor.
-                        
-                        regs[95] = 0x00040040;  // Avoid CONVERT trap + MULTIPLY trap
-                        write_word(0x800097fc, 0x70406161 >>> 0); // NOP
+                        if (mode == 0) {
+                            // Patch the floppy disk code
+                            write_word(0x8002086c, 0x4e618260 >>> 0); // Support two drives
+                            write_word(0x80020878, 0xfc000280 >>> 0); // Call the emulator
+                            
+                            // Patch a math emulator strange error
+                            // It makes it to crash with CONVERT gr96,lr4,0,0,2,1 because fraction is non-zero
+                            // Probably the Am29000 was replaced with an Am29050 and I inserted
+                            // more code without testing in the old processor.
+                            
+                            regs[95] = 0x00040040;  // Avoid CONVERT trap + MULTIPLY trap
+                            write_word(0x800097fc, 0x70406161 >>> 0); // NOP
+                        }
                     }
                 }
                 // !!! Add masks
@@ -2069,7 +2229,7 @@ am29000.prototype.start_emulation = function () {
             default:
                 throw "Instruction 0x" + instruction.toString(16) + " not implemented (PC = 0x" + pc1.toString(16) + ")\n";
         }
-    } while (count % 10000) ;
+    } while (count % (mode == 1 ? 20000 : 10000)) ;
     console.debug("Cycle " + count + " completed...\n");
 };
 

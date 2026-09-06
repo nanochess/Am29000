@@ -1,8 +1,7 @@
 //
-// CL-GD549 emulation
+// CL-GD5429 emulation
 //
-// by Oscar Toledo G.
-// All rights reserved.
+// (c) Copyright 2026 Oscar Toledo G. All rights reserved.
 // https://nanochess.org/
 //
 // Redistribution and use in source and binary forms, with or without

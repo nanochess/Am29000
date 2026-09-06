@@ -3,6 +3,7 @@
         <title>Am29000 emulator by nanochess (2026)</title>
     </head>
     <body>
+        <div id="texto"><select id="emulator" disabled autocomplete="off" onchange="start_emulator()"><option>Please select OS...<option>1997 OS<option>1999 OS<option>1999 OS minus web browser (for trying C compiler compilation)</select></div>
         <div id="terminal"><canvas id="canvas" width="800" height="600" style="cursor:none;"></canvas> </div>
         <script>
             // Aug/06/2026. First working version.
@@ -194,15 +195,22 @@
         <script src="clgd5440.js"></script>
         <script src="am29000_emulator.js"></script>
         <script>
-            if (mode == 1)
-                clgd5440 = new clgd5440(document.getElementById("canvas"));
-            else
-                clgd5429 = new clgd5429(document.getElementById("canvas"));
-            processor = new am29000();
-            if (mode == 1)
-                interval = window.setInterval("try { processor.start_emulation(); clgd5440.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
-            else
-                interval = window.setInterval("try { processor.start_emulation(); clgd5429.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+            document.getElementById("emulator").disabled = false;
+            function start_emulator() {
+                mode = document.getElementById("emulator").selectedIndex;
+                if (mode == 0)
+                    return;
+                mode--;
+                if (mode >= 1)
+                    clgd5440 = new clgd5440(document.getElementById("canvas"));
+                else
+                    clgd5429 = new clgd5429(document.getElementById("canvas"));
+                processor = new am29000();  // Rewrites mode from 2 to 1.
+                if (mode == 1)
+                    interval = window.setInterval("try { processor.start_emulation(); clgd5440.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+                else
+                    interval = window.setInterval("try { processor.start_emulation(); clgd5429.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+            }
         </script>
     </body>
 </html>

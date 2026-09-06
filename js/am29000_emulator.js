@@ -480,7 +480,7 @@ function am29000() {
     var d;
     var instruction;
     
-    if (mode == 1) {
+    if (mode >= 1) {
         total_sectors = 40 * 1048576 / 512;
         floppy1 = new Uint8Array(40 * 1048576);
 
@@ -506,9 +506,10 @@ function am29000() {
         for (c = 0; c < memory.length; c++) {
             memory[c] = 0x00000000 >>> 0;
         }
-        if (0) {
+        if (mode == 2) {
             pc1 = 0x00040020;
             rom[0x00040028 / 4] = 0x70406161;
+            mode = 1;
         } else {
             pc1 = 0x00040000;
         }

@@ -523,13 +523,14 @@ clgd5429.prototype.render = function () {
     var d;
     var e;
     var f;
-    
+    const shared16 = new Uint16Array(this.ram.buffer);
+
     this.save_cursor();
     this.draw_cursor();
     canvas_data = this.ctx.getImageData(0, 0, 800, 600);
     d = 0;
-    for (x = 0; x < 800 * 600 * 2; x += 2) {
-        e = this.ram[x] | (this.ram[x + 1] << 8);
+    for (x = 0; x < 800 * 600; x++) {
+        e = shared16[x];
         canvas_data.data[d] = (e >> 8) & 0xf8;
         canvas_data.data[d + 1] = (e >> 3) & 0xfc;
         canvas_data.data[d + 2] = (e << 3) & 0xf8;

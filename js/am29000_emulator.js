@@ -37,6 +37,9 @@
 
 const debug = 0;
 
+const AM29K_TRUE = 0x80000000 >>> 0;
+const AM29K_FALSE = 0;
+
 var current_instruction = 0;
 var last_instruction = new Array(1024);
 
@@ -590,9 +593,6 @@ function am29000() {
     }
 }
 
-am29000.prototype.AM29K_TRUE = 0x80000000 >>> 0;
-am29000.prototype.AM29K_FALSE = 0;
-
 // Count leading zeroes.
 am29000.prototype.clz = function (value)
 {
@@ -784,9 +784,8 @@ function disassemble(pc, instruction)
 }
 
 am29000.prototype.get_rc = function (instruction) {
-    var reg;
+    const reg = (instruction >> 16) & 0xff;
     
-    reg = (instruction >> 16) & 0xff;
     if (reg == 0)   // Indirect
         return (special[128] >> 2) & 0xff;
     if (reg < 128)  // Global register
@@ -795,9 +794,8 @@ am29000.prototype.get_rc = function (instruction) {
 };
 
 am29000.prototype.get_ra = function (instruction) {
-    var reg;
+    const reg = (instruction >> 8) & 0xff;
     
-    reg = (instruction >> 8) & 0xff;
     if (reg == 0)   // Indirect
         return (special[129] >> 2) & 0xff;
     if (reg < 128)  // Global register
@@ -806,9 +804,8 @@ am29000.prototype.get_ra = function (instruction) {
 };
 
 am29000.prototype.get_rb = function (instruction) {
-    var reg;
+    const reg = instruction & 0xff;
     
-    reg = instruction & 0xff;
     if (reg == 0)   // Indirect
         return (special[130] >> 2) & 0xff;
     if (reg < 128)  // Global register
@@ -821,9 +818,8 @@ am29000.prototype.imm16 = function (instruction) {
 };
 
 am29000.prototype.imm16s = function (instruction) {
-    var c;
+    const c = ((instruction >> 8) & 0xff00) | (instruction & 0xff);
     
-    c = ((instruction >> 8) & 0xff00) | (instruction & 0xff);
     if (c >= 0x8000)
         return (c - 0x10000) >>> 0;
     return c >>> 0;
@@ -851,34 +847,25 @@ am29000.prototype.alu_carry = function () {
 
 am29000.prototype.alu = function (v1, v2, c) {
     if ((special[2] & 0x0400) == 0) {
-      var tmp = v1 + v2 + c;
+        const tmp = v1 + v2 + c;
         
-      if (tmp > (0xffffffff >>> 0))
-          special[132] = special[132] | 0x80;
-      else
-          special[132] = special[132] & ~0x80;
-      if (tmp & (0x80000000 >>> 0))
-          special[132] = special[132] | 0x0200;
-      else
-          special[132] = special[132] & ~0x0200;
-      if ((tmp & (0xffffffff >>> 0)) == 0)
-          special[132] = special[132] | 0x0100;
-      else
-          special[132] = special[132] & ~0x0100;
-      special[132] = special[132] & ~0x0400; // No overflow
+        special[132] &= ~0x0780; // No overflow
+        if (tmp > (0xffffffff >>> 0))
+            special[132] |= 0x80;
+        if (tmp & (0x80000000 >>> 0))
+            special[132] |= 0x0200;
+        if ((tmp & (0xffffffff >>> 0)) == 0)
+            special[132] |= 0x0100;
     }
 }
 
 am29000.prototype.alu_simple = function (v) {
     if ((special[2] & 0x0400) == 0) {
-      if (v & (0x80000000 >>> 0))
-          special[132] = special[132] | 0x0200;
-      else
-          special[132] = special[132] & ~0x0200;
-      if ((v & (0xffffffff >>> 0)) == 0)
-          special[132] = special[132] | 0x0100;
-      else
-          special[132] = special[132] & ~0x0100;
+        special[132] &= ~0x0300;
+        if (v & (0x80000000 >>> 0))
+            special[132] |= 0x0200;
+        if ((v & (0xffffffff >>> 0)) == 0)
+            special[132] |= 0x0100;
     }
 }
 
@@ -973,29 +960,13 @@ am29000.prototype.start_emulation = function () {
             case 0x0a:  // EXBYTE
                 c = regs[this.get_rb(instruction)] & ~0xff;
                 d = this.read_bp() ^ endianness;
-                if (d == 3) {
-                    c |= (regs[this.get_ra(instruction)] >> 24) & 0xff;
-                } else if (d == 2) {
-                    c |= (regs[this.get_ra(instruction)] >> 16) & 0xff;
-                } else if (d == 1) {
-                    c |= (regs[this.get_ra(instruction)] >> 8) & 0xff;
-                } else {
-                    c |= regs[this.get_ra(instruction)] & 0xff;
-                }
+                c |= (regs[this.get_ra(instruction)] >> (d * 8)) & 0xff;
                 regs[this.get_rc(instruction)] = c >>> 0;
                 break;
             case 0x0b:  // EXBYTE imm
                 c = (instruction & 0xff) & ~0xff;
                 d = this.read_bp() ^ endianness;
-                if (d == 3) {
-                    c |= (regs[this.get_ra(instruction)] >> 24) & 0xff;
-                } else if (d == 2) {
-                    c |= (regs[this.get_ra(instruction)] >> 16) & 0xff;
-                } else if (d == 1) {
-                    c |= (regs[this.get_ra(instruction)] >> 8) & 0xff;
-                } else {
-                    c |= regs[this.get_ra(instruction)] & 0xff;
-                }
+                c |= (regs[this.get_ra(instruction)] >> (d * 8)) & 0xff;
                 regs[this.get_rc(instruction)] = c >>> 0;
                 break;
             case 0x0c:  // INBYTE
@@ -1055,39 +1026,39 @@ am29000.prototype.start_emulation = function () {
                 regs[this.get_rc(instruction)] = (regs[this.get_ra(instruction)] + (instruction & 0xff)) >>> 0;
                 break;
             case 0x16:  // LOAD
+                c = regs[this.get_rb(instruction)];
                 if ((instruction & 0x00100000) != 0) {
-                    c = regs[this.get_rb(instruction)] & 3;
-                    this.write_bp(c);
+                    this.write_bp(c & 3);
                 }
                 switch ((instruction >> 16) & 0xef) {
                     case 0x00:
                     case 0x20:
                         if (mode == 1) {
-                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(regs[this.get_rb(instruction)]) >>> 0;
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(c) >>> 0;
                         } else {
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         }
                         break;
                     case 0x01:
                         if (mode == 1) {
-                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(regs[this.get_rb(instruction)]) >>> 0;
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_dword(c) >>> 0;
                         } else {
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         }
                         break;
                     case 0x02:
                         if (mode == 1) {
-                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_word(regs[this.get_rb(instruction)]) >>> 0;
+                            regs[this.get_ra(instruction)] = clgd5440.pci_mem_read_word(c) >>> 0;
                         } else {
-                            regs[this.get_ra(instruction)] = clgd5429.mem_read_word(regs[this.get_rb(instruction)] / 4) >>> 0;
+                            regs[this.get_ra(instruction)] = clgd5429.mem_read_word(c / 4) >>> 0;
                         }
                         break;
                     case 0x04:
-                        regs[this.get_ra(instruction)] = read_word(regs[this.get_rb(instruction)]) >>> 0;
+                        regs[this.get_ra(instruction)] = read_word(c) >>> 0;
                         break;
                     case 0x41:
                     case 0x61:
-                        regs[this.get_ra(instruction)] = read_isa(regs[this.get_rb(instruction)]) >>> 0;
+                        regs[this.get_ra(instruction)] = read_isa(c) >>> 0;
                         break;
                     default:
                         throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
@@ -1095,8 +1066,7 @@ am29000.prototype.start_emulation = function () {
                 break;
             case 0x17:  // LOAD imm
                 if ((instruction & 0x00100000) != 0) {
-                    c = regs[this.get_rb(instruction)] & 3;
-                    this.write_bp(c);
+                    this.write_bp((instruction & 0xff) & 3);
                 }
                 switch ((instruction >> 16) & 0xef) {
                     case 0x04:
@@ -1145,15 +1115,14 @@ am29000.prototype.start_emulation = function () {
                 regs[this.get_rc(instruction)] = (regs[this.get_ra(instruction)] + (instruction & 0xff) + c) >>> 0;
                 break;
             case 0x1e:  // STORE
+                c = regs[this.get_rb(instruction)];
                 if ((instruction & 0x00100000) != 0) {
-                    c = regs[this.get_rb(instruction)] & 3;
-                    this.write_bp(c);
+                    this.write_bp(c & 3);
                 }
+                d = regs[this.get_ra(instruction)];
                 switch ((instruction >> 16) & 0xef) {
                     case 0x00:
                     case 0x20:
-                        c = regs[this.get_rb(instruction)];
-                        d = regs[this.get_ra(instruction)];
                         if (mode == 1)
                             e = clgd5440.pci_mem_write_dword(c, d);
                         else
@@ -1162,8 +1131,6 @@ am29000.prototype.start_emulation = function () {
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         break;
                     case 0x01:
-                        c = regs[this.get_rb(instruction)];
-                        d = regs[this.get_ra(instruction)];
                         if (mode == 1)
                             e = clgd5440.pci_mem_write_byte(c, d);
                         else
@@ -1172,8 +1139,6 @@ am29000.prototype.start_emulation = function () {
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         break;
                     case 0x02:
-                        c = regs[this.get_rb(instruction)];
-                        d = regs[this.get_ra(instruction)];
                         if (mode == 1)
                             e = clgd5440.pci_mem_write_word(c, d);
                         else
@@ -1182,15 +1147,15 @@ am29000.prototype.start_emulation = function () {
                             throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
                         break;
                     case 0x04:
-                        write_word(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
+                        write_word(c, d);
                         break;
                     case 0x41:
                     case 0x61:
-                        write_isa(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
+                        write_isa(c, d);
                         break;
                     case 0x42:
                     case 0x62:
-                        write_isaw(regs[this.get_rb(instruction)], regs[this.get_ra(instruction)]);
+                        write_isaw(c, d);
                         break;
                     default:
                         throw "Unhandled memory control 0x" + instruction.toString(16) + "\n";
@@ -1198,7 +1163,7 @@ am29000.prototype.start_emulation = function () {
                 break;
             case 0x1f:  // STORE
                 if ((instruction & 0x00100000) != 0) {
-                    c = regs[this.get_rb(instruction)] & 3;
+                    c = (instruction & 0xff) & 3;
                     this.write_bp(c);
                 }
                 switch ((instruction >> 16) & 0xef) {
@@ -1278,17 +1243,17 @@ am29000.prototype.start_emulation = function () {
             case 0x2e:    // CPBYTE
                 c = regs[this.get_ra(instruction)] ^ regs[this.get_rb(instruction)];
                 if ((c & 0xff) == 0 || (c & 0xff00) == 0 || (c & 0xff0000) == 0 || (c & 0xff000000) == 0) {
-                    regs[this.get_rc(instruction)] = this.AM29K_TRUE;
+                    regs[this.get_rc(instruction)] = AM29K_TRUE;
                 } else {
-                    regs[this.get_rc(instruction)] = this.AM29K_FALSE;
+                    regs[this.get_rc(instruction)] = AM29K_FALSE;
                 }
                 break;
             case 0x2f:    // CPBYTE imm
                 c = regs[this.get_ra(instruction)] ^ (instruction & 0xff);
                 if ((c & 0xff) == 0 || (c & 0xff00) == 0 || (c & 0xff0000) == 0 || (c & 0xff000000) == 0) {
-                    regs[this.get_rc(instruction)] = this.AM29K_TRUE;
+                    regs[this.get_rc(instruction)] = AM29K_TRUE;
                 } else {
-                    regs[this.get_rc(instruction)] = this.AM29K_FALSE;
+                    regs[this.get_rc(instruction)] = AM29K_FALSE;
                 }
                 break;
             case 0x30:    // SUBRS
@@ -1408,82 +1373,82 @@ am29000.prototype.start_emulation = function () {
             case 0x40:    // CPLT
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = regs[this.get_rb(instruction)] >> 0;
-                regs[this.get_rc(instruction)] = (e < f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e < f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x41:    // CPLT imm
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = (instruction & 0xff) >> 0;
-                regs[this.get_rc(instruction)] = (e < f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e < f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x42:    // CPLTU
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c < d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c < d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x43:    // CPLTU imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c < d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c < d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x44:    // CPLE
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = regs[this.get_rb(instruction)] >> 0;
-                regs[this.get_rc(instruction)] = (e <= f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e <= f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x45:    // CPLE imm
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = (instruction & 0xff) >> 0;
-                regs[this.get_rc(instruction)] = (e <= f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e <= f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x46:    // CPLEU
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c <= d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c <= d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x47:    // CPLEU imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c <= d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c <= d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x48:    // CPGT
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = regs[this.get_rb(instruction)] >> 0;
-                regs[this.get_rc(instruction)] = (e > f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e > f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x49:    // CPGT imm
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = (instruction & 0xff) >> 0;
-                regs[this.get_rc(instruction)] = (e > f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e > f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4a:    // CPGTU
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c > d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c > d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4b:    // CPGTU imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c > d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c > d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4c:    // CPGE
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = regs[this.get_rb(instruction)] >> 0;
-                regs[this.get_rc(instruction)] = (e >= f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e >= f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4d:    // CPGE imm
                 e = regs[this.get_ra(instruction)] >> 0;
                 f = (instruction & 0xff) >> 0;
-                regs[this.get_rc(instruction)] = (e >= f) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (e >= f) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4e:    // CPGEU
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c >= d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c >= d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x4f:    // CPGEU imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c >= d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c >= d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x50:    // ASLT
                 e = regs[this.get_ra(instruction)] >> 0;
@@ -1616,22 +1581,22 @@ am29000.prototype.start_emulation = function () {
             case 0x60:    // CPEQ
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c == d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c == d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x61:    // CPEQ imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c == d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c == d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x62:    // CPNEQ
                 c = regs[this.get_ra(instruction)];
                 d = regs[this.get_rb(instruction)];
-                regs[this.get_rc(instruction)] = (c != d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c != d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x63:    // CPNEQ imm
                 c = regs[this.get_ra(instruction)];
                 d = (instruction & 0xff);
-                regs[this.get_rc(instruction)] = (c != d) ? this.AM29K_TRUE : this.AM29K_FALSE;
+                regs[this.get_rc(instruction)] = (c != d) ? AM29K_TRUE : AM29K_FALSE;
                 break;
             case 0x64:  // MUL
                 c = regs[this.get_rb(instruction)];

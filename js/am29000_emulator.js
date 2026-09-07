@@ -2195,7 +2195,7 @@ am29000.prototype.start_emulation = function () {
             default:
                 throw "Instruction 0x" + instruction.toString(16) + " not implemented (PC = 0x" + pc1.toString(16) + ")\n";
         }
-    } while (count % (mode == 1 ? 20000 : 10000)) ;
+    } while (count % (mode == 1 ? 200000 : 100000)) ;
     console.debug("Cycle " + count + " completed...\n");
 };
 

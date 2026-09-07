@@ -252,9 +252,9 @@
                     clgd5429 = new clgd5429(document.getElementById("canvas"));
                 processor = new am29000();  // Rewrites mode from 2 to 1.
                 if (mode == 1)
-                    interval = window.setInterval("try { processor.start_emulation(); clgd5440.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+                    interval = window.setInterval("try { processor.start_emulation(); clgd5440.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1000 / 60);
                 else
-                    interval = window.setInterval("try { processor.start_emulation(); clgd5429.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1);
+                    interval = window.setInterval("try { processor.start_emulation(); clgd5429.render(); } catch (e) { if (debug) { d = current_instruction; do { console.debug(last_instruction[d]); d = (d + 1) & 0x03ff; } while (d != current_instruction) ; } debug_info(); window.alert(e); window.clearInterval(interval); }", 1000 / 60);
             }
         </script>
     </body>

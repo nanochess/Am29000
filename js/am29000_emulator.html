@@ -120,6 +120,9 @@
                     regs[90] &= ~0x01;
                 e.preventDefault();
             }, false);
+            document.getElementById("canvas").addEventListener("contextmenu", function(e) {
+                e.preventDefault();
+            }, false);
                     document.addEventListener("keydown", function(e) {
                         var key = e.key;
                         
